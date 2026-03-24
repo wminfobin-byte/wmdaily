@@ -501,8 +501,10 @@ function extractMonthKey(filename) {
 // ══════════════════════════════════════════════
 // ── Auth & Modal ──
 // ══════════════════════════════════════════════
-const _a = [97,87,53,109,98,49,57,105,97,87,52,61]; // encoded id
-const _b = [100,50,112,107,99,87,104,120,98,72,77,53,77,105,69,61]; // encoded pw
+const _creds = [
+  { a: [97,87,53,109,98,49,57,105,97,87,52,61], b: [100,50,112,107,99,87,104,120,98,72,77,53,77,105,69,61] },
+  { a: [89,87,82,116,97,87,52,61], b: [100,50,86,104,100,109,86,121,99,122,65,121,78,84,103,104,73,81,61,61] }
+];
 let authPassed = false;
 
 function _d(arr) { return atob(arr.map(c => String.fromCharCode(c)).join('')); }
@@ -522,7 +524,7 @@ function openModal() {
 function authLogin() {
   const id = document.getElementById('authId').value.trim();
   const pw = document.getElementById('authPw').value;
-  if (id === _d(_a) && pw === _d(_b)) {
+  if (_creds.some(c => id === _d(c.a) && pw === _d(c.b))) {
     authPassed = true;
     document.getElementById('authModal').classList.remove('active');
     document.getElementById('uploadModal').classList.add('active');
@@ -1274,13 +1276,13 @@ function updateLastUpdateTime() {
   const el = document.getElementById('lastUpdate');
   const saved = localStorage.getItem('dbPerf_lastUpdate');
   if (saved) {
-    el.textContent = `마지막 업데이트: ${saved}`;
+    el.textContent = `최종 업데이트: ${saved}`;
   }
 }
 function saveLastUpdateTime() {
   const now = fmtDateTime(new Date());
   localStorage.setItem('dbPerf_lastUpdate', now);
-  document.getElementById('lastUpdate').textContent = `마지막 업데이트: ${now}`;
+  document.getElementById('lastUpdate').textContent = `최종 업데이트: ${now}`;
 }
 
 // ══════════════════════════════════════════════
@@ -1738,6 +1740,17 @@ async function tryBuildTab4() {
   const queryEndDate = dateEnd || (accDates.length > 0 ? accDates[accDates.length-1] : null);
   const activeRoster = getRosterForDate(queryEndDate);
 
+  // 전월 명단 (그룹 변동 비교용)
+  let prevMonthRoster = null;
+  if (queryEndDate) {
+    const months = Object.keys(rosterByMonth).sort();
+    const curMonth = queryEndDate.slice(0, 7);
+    const prevMonths = months.filter(m => m < curMonth);
+    if (prevMonths.length > 0) {
+      prevMonthRoster = rosterByMonth[prevMonths[prevMonths.length - 1]];
+    }
+  }
+
   const filters = getSelectedFilters();
   const isPersonVisible = (name) => {
     if (filters.persons && !filters.persons.has(name)) return false;
@@ -1885,12 +1898,14 @@ async function tryBuildTab4() {
     if (!isPersonVisible(name)) return;
     const stats = personStats.get(name) || getStats(name);
     const g = info.group;
+    const prevInfo = prevMonthRoster ? prevMonthRoster.get(name) : null;
+    const prevGroup = prevInfo ? prevInfo.group : null;
     if (talkisGroups.includes(g)) {
       if (!groupedTalkis.has(g)) groupedTalkis.set(g, []);
-      groupedTalkis.get(g).push({ name, ...info, ...stats });
+      groupedTalkis.get(g).push({ name, ...info, ...stats, prevGroup });
     } else {
       if (!groupedMain.has(g)) groupedMain.set(g, []);
-      groupedMain.get(g).push({ name, ...info, ...stats });
+      groupedMain.get(g).push({ name, ...info, ...stats, prevGroup });
     }
   });
 
@@ -2060,8 +2075,17 @@ async function tryBuildTab4() {
         const pureContract = p.cumContractNonIN - p.holActualContract;
         const rank = idx + 1;
 
+        // 전월 대비 그룹 변동 색상
+        const grpRank = { 'W그룹': 3, 'E그룹': 2, 'N그룹': 1 };
+        let groupChgStyle = '';
+        if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
+          if (grpRank[p.group] < grpRank[p.prevGroup]) groupChgStyle = 'background:#DDD9C4;'; // 하향
+          else if (grpRank[p.group] > grpRank[p.prevGroup]) groupChgStyle = 'background:#C5D9F1;'; // 상향
+        }
+        const gs = groupChgStyle ? ` style="${groupChgStyle}"` : '';
+
         html += `<tr>`;
-        html += `<td>${rank}</td><td class="left">${p.center}</td><td class="left">${p.team}</td><td class="name-cell">${p.name}</td><td>${p.hireDate}</td>`;
+        html += `<td>${rank}</td><td class="left"${gs}>${p.center}</td><td class="left"${gs}>${p.team}</td><td class="name-cell"${gs}>${p.name}</td><td${gs}>${p.hireDate}</td>`;
         html += `<td>${p.todayDb}</td><td>${p.todayDailyContract}</td><td>${p.todayActualContract}</td><td class="rate-cell">${fmtRate(p.todayActualContract, p.todayDb)}</td>`;
         html += `<td>${p.cumDbNonIN}</td><td>${p.cumCancelNonIN}</td><td>${p.cumContractNonIN}</td>`;
         html += `<td>${p.cumDbIN}</td><td>${p.cumCancelIN}</td><td>${p.cumContractIN}</td>`;
