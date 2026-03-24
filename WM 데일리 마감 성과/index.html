@@ -2196,7 +2196,25 @@ function downloadHtml(tab) {
   displayKpi(tab);
 
   const tabName = tab === 'main' ? '뇌새김' : '톡이즈';
+  // 로고를 base64로 인라인 변환 (다운로드 파일에서 깨짐 방지)
+  const logoImg = document.querySelector('.header-left img');
+  const origSrc = logoImg ? logoImg.getAttribute('src') : null;
+  if (logoImg) {
+    const cvs = document.createElement('canvas');
+    cvs.width = logoImg.naturalWidth; cvs.height = logoImg.naturalHeight;
+    cvs.getContext('2d').drawImage(logoImg, 0, 0);
+    try { logoImg.setAttribute('src', cvs.toDataURL('image/png')); } catch(e) {}
+  }
+  // 파비콘도 인라인 변환
+  const favicon = document.querySelector('link[rel="icon"]');
+  const origFavHref = favicon ? favicon.getAttribute('href') : null;
+  if (favicon && logoImg) {
+    try { favicon.setAttribute('href', logoImg.getAttribute('src')); } catch(e) {}
+  }
   const html = document.documentElement.outerHTML;
+  // 원래 경로 복원
+  if (logoImg && origSrc) logoImg.setAttribute('src', origSrc);
+  if (favicon && origFavHref) favicon.setAttribute('href', origFavHref);
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const link = document.createElement('a');
   link.download = `WM_${tabName}_데일리성과_${new Date().toISOString().slice(0,10)}.html`;
