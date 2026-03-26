@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WM 그룹별/개인별 데일리 성과</title>
-<link rel="icon" type="image/png" href="logo.png">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -20,6 +19,13 @@
   .header-right .last-update { font-size: 12px; opacity: 0.8; }
   .btn-upload-open { padding: 8px 16px; border: 1px solid rgba(255,255,255,0.5); border-radius: 8px; background: rgba(255,255,255,0.15); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
   .btn-upload-open:hover { background: rgba(255,255,255,0.3); }
+  .btn-sync { padding: 8px 16px; border: 1px solid rgba(76,175,80,0.7); border-radius: 8px; background: rgba(76,175,80,0.25); color: #a5d6a7; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-sync:hover { background: rgba(76,175,80,0.45); color: #fff; }
+  .btn-sync.syncing { animation: pulse-sync 1s infinite; pointer-events: none; }
+  @keyframes pulse-sync { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .sync-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; }
+  .sync-badge.loaded { background: #34a853; color: #fff; }
+  .sync-badge.local { background: #e67700; color: #fff; }
 
   /* Modal overlay */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
@@ -222,6 +228,7 @@
   </div>
   <div class="header-right">
     <span class="last-update" id="lastUpdate"></span>
+    <button class="btn-sync" id="btnSync" onclick="syncData()" style="display:none;">동기화 배포</button>
     <button class="btn-upload-open" onclick="openModal()">데이터 업로드</button>
   </div>
 </div>
@@ -527,6 +534,7 @@ function authLogin() {
   const pw = document.getElementById('authPw').value;
   if (_creds.some(c => id === _d(c.a) && pw === _d(c.b))) {
     authPassed = true;
+    document.getElementById('btnSync').style.display = '';
     document.getElementById('authModal').classList.remove('active');
     document.getElementById('uploadModal').classList.add('active');
   } else {
@@ -2196,25 +2204,7 @@ function downloadHtml(tab) {
   displayKpi(tab);
 
   const tabName = tab === 'main' ? '뇌새김' : '톡이즈';
-  // 로고를 base64로 인라인 변환 (다운로드 파일에서 깨짐 방지)
-  const logoImg = document.querySelector('.header-left img');
-  const origSrc = logoImg ? logoImg.getAttribute('src') : null;
-  if (logoImg) {
-    const cvs = document.createElement('canvas');
-    cvs.width = logoImg.naturalWidth; cvs.height = logoImg.naturalHeight;
-    cvs.getContext('2d').drawImage(logoImg, 0, 0);
-    try { logoImg.setAttribute('src', cvs.toDataURL('image/png')); } catch(e) {}
-  }
-  // 파비콘도 인라인 변환
-  const favicon = document.querySelector('link[rel="icon"]');
-  const origFavHref = favicon ? favicon.getAttribute('href') : null;
-  if (favicon && logoImg) {
-    try { favicon.setAttribute('href', logoImg.getAttribute('src')); } catch(e) {}
-  }
   const html = document.documentElement.outerHTML;
-  // 원래 경로 복원
-  if (logoImg && origSrc) logoImg.setAttribute('src', origSrc);
-  if (favicon && origFavHref) favicon.setAttribute('href', origFavHref);
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const link = document.createElement('a');
   link.download = `WM_${tabName}_데일리성과_${new Date().toISOString().slice(0,10)}.html`;
@@ -2264,10 +2254,128 @@ function downloadExcel() {
   XLSX.writeFile(wb, `${getActiveTabName()}_성과_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
+// ══════════════════════════════════════════════
+// ── Data Sync (배포 동기화) ──
+// ══════════════════════════════════════════════
+async function exportSyncData() {
+  const db = await openDB();
+  const stores = [STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT, STORE_FILEMETA];
+  const tx = db.transaction(stores, 'readonly');
+  const data = {};
+
+  for (const storeName of stores) {
+    const store = tx.objectStore(storeName);
+    data[storeName] = await new Promise((resolve, reject) => {
+      const entries = [];
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) {
+          entries.push({ key: cursor.key, value: cursor.value });
+          cursor.continue();
+        } else resolve(entries);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  db.close();
+  data._syncTime = fmtDateTime(new Date());
+  data._lastUpdate = localStorage.getItem('dbPerf_lastUpdate') || '';
+  return data;
+}
+
+async function importSyncData(data) {
+  const db = await openDB();
+  const stores = [STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT, STORE_FILEMETA];
+  const tx = db.transaction(stores, 'readwrite');
+
+  for (const storeName of stores) {
+    const store = tx.objectStore(storeName);
+    store.clear();
+    if (data[storeName]) {
+      for (const entry of data[storeName]) {
+        store.put(entry.value, entry.key);
+      }
+    }
+  }
+
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+  db.close();
+
+  if (data._lastUpdate) {
+    localStorage.setItem('dbPerf_lastUpdate', data._lastUpdate);
+    updateLastUpdateTime();
+  }
+}
+
+async function syncData() {
+  if (!authPassed) {
+    openModal();
+    return;
+  }
+
+  const btn = document.getElementById('btnSync');
+  btn.classList.add('syncing');
+  btn.textContent = '동기화 중...';
+
+  try {
+    const data = await exportSyncData();
+    const json = JSON.stringify(data);
+    const blob = new Blob([json], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.download = 'data.json';
+    link.href = URL.createObjectURL(blob);
+    link.click();
+    URL.revokeObjectURL(link.href);
+
+    btn.textContent = '동기화 완료!';
+    setTimeout(() => { btn.textContent = '동기화 배포'; btn.classList.remove('syncing'); }, 2000);
+
+    showStatus(`data.json 다운로드 완료 — 이 파일을 index.html과 같은 폴더에 넣고 git push하면 배포 사이트에 반영됩니다.`, 'success');
+  } catch (err) {
+    btn.textContent = '동기화 배포';
+    btn.classList.remove('syncing');
+    showStatus(`동기화 오류: ${err.message}`, 'error');
+  }
+}
+
+async function loadRemoteSyncData() {
+  try {
+    const res = await fetch('data.json', { cache: 'no-cache' });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data || !data[STORE_DATES]) return false;
+
+    // 로컬 IndexedDB에 데이터가 있으면 원격 데이터 무시 (로컬 우선)
+    const localAcc = await loadAccumulated();
+    const localDates = Object.keys(localAcc.dates);
+    if (localDates.length > 0) {
+      console.log('로컬 데이터 존재 — 원격 data.json 무시');
+      return false;
+    }
+
+    await importSyncData(data);
+    console.log(`원격 data.json 로드 완료 (동기화: ${data._syncTime || '?'})`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Init ──
-refreshStorageDisplay().catch(() => {});
-updateLastUpdateTime();
-loadSavedFiles().catch(() => {});
+(async function init() {
+  refreshStorageDisplay().catch(() => {});
+  updateLastUpdateTime();
+
+  // 원격 data.json 먼저 시도
+  const remoteLoaded = await loadRemoteSyncData();
+  if (remoteLoaded) {
+    document.getElementById('lastUpdate').textContent += ' (서버 데이터)';
+  }
+
+  await loadSavedFiles().catch(() => {});
+})();
 </script>
 </body>
 </html>
