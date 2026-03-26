@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WM 그룹별/개인별 데일리 성과</title>
+<link rel="icon" id="favicon" href="logo.png" type="image/png">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -19,13 +20,11 @@
   .header-right .last-update { font-size: 12px; opacity: 0.8; }
   .btn-upload-open { padding: 8px 16px; border: 1px solid rgba(255,255,255,0.5); border-radius: 8px; background: rgba(255,255,255,0.15); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
   .btn-upload-open:hover { background: rgba(255,255,255,0.3); }
-  .btn-sync { padding: 8px 16px; border: 1px solid rgba(76,175,80,0.7); border-radius: 8px; background: rgba(76,175,80,0.25); color: #a5d6a7; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-  .btn-sync:hover { background: rgba(76,175,80,0.45); color: #fff; }
-  .btn-sync.syncing { animation: pulse-sync 1s infinite; pointer-events: none; }
+  .btn-sync-modal { width: 100%; padding: 12px; border: none; border-radius: 8px; background: #34a853; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; margin-top: 8px; }
+  .btn-sync-modal:hover { background: #2e7d32; }
+  .btn-sync-modal.syncing { animation: pulse-sync 1s infinite; pointer-events: none; }
+  .btn-sync-modal:disabled { background: #ccc; cursor: not-allowed; }
   @keyframes pulse-sync { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-  .sync-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; }
-  .sync-badge.loaded { background: #34a853; color: #fff; }
-  .sync-badge.local { background: #e67700; color: #fff; }
 
   /* Modal overlay */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
@@ -228,8 +227,7 @@
   </div>
   <div class="header-right">
     <span class="last-update" id="lastUpdate"></span>
-    <button class="btn-sync" id="btnSync" onclick="syncData()" style="display:none;">동기화 배포</button>
-    <button class="btn-upload-open" onclick="openModal()">데이터 업로드</button>
+    <button class="btn-upload-open" id="btnAdmin" onclick="openModal()">관리자 로그인</button>
   </div>
 </div>
 
@@ -318,6 +316,7 @@
         </div>
       </div>
     </div>
+    <button class="btn-sync-modal" id="btnSyncModal" onclick="syncData()">배포 서버에 동기화</button>
     <div id="statusBar"></div>
   </div>
 </div>
@@ -551,7 +550,7 @@ function authLogin() {
   const pw = document.getElementById('authPw').value;
   if (_creds.some(c => id === _d(c.a) && pw === _d(c.b))) {
     authPassed = true;
-    document.getElementById('btnSync').style.display = '';
+    document.getElementById('btnAdmin').textContent = '데이터 업로드';
     document.getElementById('authModal').classList.remove('active');
     document.getElementById('uploadModal').classList.add('active');
   } else {
@@ -2403,21 +2402,16 @@ async function pushToGitHub(jsonStr) {
 }
 
 async function syncData() {
-  if (!authPassed) {
-    openModal();
-    return;
-  }
-
   if (!getGhToken()) {
-    openModal();
     openTokenSetup();
     showStatus('GitHub 토큰을 먼저 설정해주세요.', 'warn');
     return;
   }
 
-  const btn = document.getElementById('btnSync');
+  const btn = document.getElementById('btnSyncModal');
   btn.classList.add('syncing');
   btn.textContent = '동기화 중...';
+  btn.disabled = true;
 
   try {
     const data = await exportSyncData();
@@ -2425,21 +2419,19 @@ async function syncData() {
     await pushToGitHub(json);
 
     btn.textContent = '동기화 완료!';
-    btn.style.borderColor = 'rgba(52,168,83,0.9)';
-    btn.style.background = 'rgba(52,168,83,0.4)';
-    btn.style.color = '#fff';
+    btn.style.background = '#1a73e8';
     setTimeout(() => {
-      btn.textContent = '동기화 배포';
+      btn.textContent = '배포 서버에 동기화';
       btn.classList.remove('syncing');
-      btn.style.borderColor = '';
+      btn.disabled = false;
       btn.style.background = '';
-      btn.style.color = '';
     }, 3000);
 
     showStatus('배포 서버에 데이터가 동기화되었습니다! 1~2분 후 반영됩니다.', 'success');
   } catch (err) {
-    btn.textContent = '동기화 배포';
+    btn.textContent = '배포 서버에 동기화';
     btn.classList.remove('syncing');
+    btn.disabled = false;
     showStatus(`동기화 오류: ${err.message}`, 'error');
   }
 }
@@ -2466,8 +2458,28 @@ async function loadRemoteSyncData() {
   }
 }
 
+// ── Favicon: 로고를 정사각형으로 변환 ──
+function setupFavicon() {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const size = Math.max(img.width, img.height);
+    const cvs = document.createElement('canvas');
+    cvs.width = size;
+    cvs.height = size;
+    const ctx = cvs.getContext('2d');
+    const x = (size - img.width) / 2;
+    const y = (size - img.height) / 2;
+    ctx.drawImage(img, x, y);
+    const favicon = document.getElementById('favicon');
+    if (favicon) favicon.href = cvs.toDataURL('image/png');
+  };
+  img.src = 'logo.png';
+}
+
 // ── Init ──
 (async function init() {
+  setupFavicon();
   refreshStorageDisplay().catch(() => {});
   updateLastUpdateTime();
   initTokenStatus();
