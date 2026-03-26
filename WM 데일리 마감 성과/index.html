@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WM 그룹별/개인별 데일리 성과</title>
-<link rel="icon" id="favicon" href="logo.png" type="image/png">
+<link rel="icon" id="favicon" type="image/png" href="logo.png">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -20,11 +20,6 @@
   .header-right .last-update { font-size: 12px; opacity: 0.8; }
   .btn-upload-open { padding: 8px 16px; border: 1px solid rgba(255,255,255,0.5); border-radius: 8px; background: rgba(255,255,255,0.15); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
   .btn-upload-open:hover { background: rgba(255,255,255,0.3); }
-  .btn-sync-modal { width: 100%; padding: 12px; border: none; border-radius: 8px; background: #34a853; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; margin-top: 8px; }
-  .btn-sync-modal:hover { background: #2e7d32; }
-  .btn-sync-modal.syncing { animation: pulse-sync 1s infinite; pointer-events: none; }
-  .btn-sync-modal:disabled { background: #ccc; cursor: not-allowed; }
-  @keyframes pulse-sync { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
   /* Modal overlay */
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
@@ -299,24 +294,6 @@
       </div>
       <div id="archiveList" style="display:none;width:100%;max-height:200px;overflow-y:auto;font-size:12px;"></div>
     </div>
-    <div class="storage-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
-      <div style="display:flex;align-items:center;gap:8px;width:100%;">
-        <span class="storage-label">GitHub 동기화:</span>
-        <span id="syncStatus" style="font-size:12px;color:#888;">토큰 미설정</span>
-        <button onclick="openTokenSetup()" style="margin-left:auto;">토큰 설정</button>
-      </div>
-      <div id="tokenSetup" style="display:none;width:100%;padding:8px 0;">
-        <div style="font-size:11px;color:#666;margin-bottom:6px;">
-          GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens<br>
-          Repository: <strong>wm_daily</strong> | Permission: <strong>Contents (Read and write)</strong>
-        </div>
-        <div style="display:flex;gap:6px;">
-          <input type="password" id="ghTokenInput" placeholder="ghp_xxxx 또는 github_pat_xxxx" style="flex:1;padding:6px 10px;border:1px solid #ccc;border-radius:6px;font-size:12px;">
-          <button onclick="saveGhToken()" style="padding:6px 14px;background:#1a73e8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;">저장</button>
-        </div>
-      </div>
-    </div>
-    <button class="btn-sync-modal" id="btnSyncModal" onclick="syncData()">배포 서버에 동기화</button>
     <div id="statusBar"></div>
   </div>
 </div>
@@ -2270,198 +2247,9 @@ function downloadExcel() {
   XLSX.writeFile(wb, `${getActiveTabName()}_성과_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
-// ══════════════════════════════════════════════
-// ── Data Sync (배포 동기화 via GitHub API) ──
-// ══════════════════════════════════════════════
-const GH_OWNER = 'wminfobin-byte';
-const GH_REPO = 'wm_daily';
-const GH_FILE_PATH = 'WM 데일리 마감 성과/data.json';
-const GH_TOKEN_KEY = 'dbPerf_ghToken';
-
-function getGhToken() { return localStorage.getItem(GH_TOKEN_KEY) || ''; }
-
-function openTokenSetup() {
-  const el = document.getElementById('tokenSetup');
-  el.style.display = el.style.display === 'none' ? 'block' : 'none';
-  document.getElementById('ghTokenInput').value = getGhToken();
-}
-
-function saveGhToken() {
-  const token = document.getElementById('ghTokenInput').value.trim();
-  if (token) {
-    localStorage.setItem(GH_TOKEN_KEY, token);
-    document.getElementById('tokenSetup').style.display = 'none';
-    document.getElementById('syncStatus').textContent = '토큰 설정됨';
-    document.getElementById('syncStatus').style.color = '#34a853';
-    showStatus('GitHub 토큰이 저장되었습니다.', 'success');
-  } else {
-    localStorage.removeItem(GH_TOKEN_KEY);
-    document.getElementById('syncStatus').textContent = '토큰 미설정';
-    document.getElementById('syncStatus').style.color = '#888';
-  }
-}
-
-function initTokenStatus() {
-  const el = document.getElementById('syncStatus');
-  if (getGhToken()) {
-    el.textContent = '토큰 설정됨';
-    el.style.color = '#34a853';
-  }
-}
-
-async function exportSyncData() {
-  const db = await openDB();
-  const stores = [STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT, STORE_FILEMETA];
-  const tx = db.transaction(stores, 'readonly');
-  const data = {};
-
-  for (const storeName of stores) {
-    const store = tx.objectStore(storeName);
-    data[storeName] = await new Promise((resolve, reject) => {
-      const entries = [];
-      const req = store.openCursor();
-      req.onsuccess = e => {
-        const cursor = e.target.result;
-        if (cursor) {
-          entries.push({ key: cursor.key, value: cursor.value });
-          cursor.continue();
-        } else resolve(entries);
-      };
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  db.close();
-  data._syncTime = fmtDateTime(new Date());
-  data._lastUpdate = localStorage.getItem('dbPerf_lastUpdate') || '';
-  return data;
-}
-
-async function importSyncData(data) {
-  const db = await openDB();
-  const stores = [STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT, STORE_FILEMETA];
-  const tx = db.transaction(stores, 'readwrite');
-
-  for (const storeName of stores) {
-    const store = tx.objectStore(storeName);
-    store.clear();
-    if (data[storeName]) {
-      for (const entry of data[storeName]) {
-        store.put(entry.value, entry.key);
-      }
-    }
-  }
-
-  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
-  db.close();
-
-  if (data._lastUpdate) {
-    localStorage.setItem('dbPerf_lastUpdate', data._lastUpdate);
-    updateLastUpdateTime();
-  }
-}
-
-async function pushToGitHub(jsonStr) {
-  const token = getGhToken();
-  if (!token) throw new Error('GitHub 토큰이 설정되지 않았습니다. 업로드 모달에서 토큰을 설정해주세요.');
-
-  const apiUrl = `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${encodeURIComponent(GH_FILE_PATH)}`;
-  const headers = {
-    'Authorization': `Bearer ${token}`,
-    'Accept': 'application/vnd.github+json',
-    'Content-Type': 'application/json',
-  };
-
-  // 기존 파일의 sha 가져오기 (업데이트 시 필요)
-  let sha = null;
-  try {
-    const getRes = await fetch(apiUrl, { headers });
-    if (getRes.ok) {
-      const existing = await getRes.json();
-      sha = existing.sha;
-    }
-  } catch {}
-
-  const content = btoa(unescape(encodeURIComponent(jsonStr)));
-  const body = {
-    message: `data: 동기화 ${fmtDateTime(new Date())}`,
-    content,
-    branch: 'main',
-  };
-  if (sha) body.sha = sha;
-
-  const putRes = await fetch(apiUrl, { method: 'PUT', headers, body: JSON.stringify(body) });
-  if (!putRes.ok) {
-    const err = await putRes.json().catch(() => ({}));
-    if (putRes.status === 401 || putRes.status === 403) {
-      throw new Error('토큰 권한 오류 — 토큰이 올바른지, Contents 쓰기 권한이 있는지 확인해주세요.');
-    }
-    throw new Error(err.message || `GitHub API 오류 (${putRes.status})`);
-  }
-  return await putRes.json();
-}
-
-async function syncData() {
-  if (!getGhToken()) {
-    openTokenSetup();
-    showStatus('GitHub 토큰을 먼저 설정해주세요.', 'warn');
-    return;
-  }
-
-  const btn = document.getElementById('btnSyncModal');
-  btn.classList.add('syncing');
-  btn.textContent = '동기화 중...';
-  btn.disabled = true;
-
-  try {
-    const data = await exportSyncData();
-    const json = JSON.stringify(data);
-    await pushToGitHub(json);
-
-    btn.textContent = '동기화 완료!';
-    btn.style.background = '#1a73e8';
-    setTimeout(() => {
-      btn.textContent = '배포 서버에 동기화';
-      btn.classList.remove('syncing');
-      btn.disabled = false;
-      btn.style.background = '';
-    }, 3000);
-
-    showStatus('배포 서버에 데이터가 동기화되었습니다! 1~2분 후 반영됩니다.', 'success');
-  } catch (err) {
-    btn.textContent = '배포 서버에 동기화';
-    btn.classList.remove('syncing');
-    btn.disabled = false;
-    showStatus(`동기화 오류: ${err.message}`, 'error');
-  }
-}
-
-async function loadRemoteSyncData() {
-  try {
-    const res = await fetch('data.json', { cache: 'no-cache' });
-    if (!res.ok) return false;
-    const data = await res.json();
-    if (!data || !data[STORE_DATES]) return false;
-
-    const localAcc = await loadAccumulated();
-    const localDates = Object.keys(localAcc.dates);
-    if (localDates.length > 0) {
-      console.log('로컬 데이터 존재 — 원격 data.json 무시');
-      return false;
-    }
-
-    await importSyncData(data);
-    console.log(`원격 data.json 로드 완료 (동기화: ${data._syncTime || '?'})`);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ── Favicon: 로고를 정사각형으로 변환 ──
 function setupFavicon() {
   const img = new Image();
-  img.crossOrigin = 'anonymous';
   img.onload = () => {
     const size = Math.max(img.width, img.height);
     const cvs = document.createElement('canvas');
@@ -2471,10 +2259,12 @@ function setupFavicon() {
     const x = (size - img.width) / 2;
     const y = (size - img.height) / 2;
     ctx.drawImage(img, x, y);
-    const favicon = document.getElementById('favicon');
-    if (favicon) favicon.href = cvs.toDataURL('image/png');
+    try {
+      const favicon = document.getElementById('favicon');
+      if (favicon) favicon.href = cvs.toDataURL('image/png');
+    } catch {}
   };
-  img.src = 'logo.png';
+  img.src = document.querySelector('.header-left img').src;
 }
 
 // ── Init ──
@@ -2482,14 +2272,6 @@ function setupFavicon() {
   setupFavicon();
   refreshStorageDisplay().catch(() => {});
   updateLastUpdateTime();
-  initTokenStatus();
-
-  // 원격 data.json 먼저 시도
-  const remoteLoaded = await loadRemoteSyncData();
-  if (remoteLoaded) {
-    document.getElementById('lastUpdate').textContent += ' (서버 데이터)';
-  }
-
   await loadSavedFiles().catch(() => {});
 })();
 </script>
