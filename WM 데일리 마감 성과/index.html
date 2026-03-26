@@ -2317,9 +2317,9 @@ function captureForEmail(type) {
 
     if (type === 'talkis') {
       if (!talkisPanel || !talkisPanel.innerHTML) { restore(); reject('톡이즈 데이터 없음'); return; }
-      html2canvas(talkisPanel, { scale: 1.5, backgroundColor: '#f0f2f5' }).then(canvas => {
+      html2canvas(talkisPanel, { scale: 1, backgroundColor: '#f0f2f5' }).then(canvas => {
         restore();
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
+        resolve(canvas.toDataURL('image/jpeg', 0.4));
       }).catch(err => { restore(); reject(err); });
       return;
     }
@@ -2342,10 +2342,10 @@ function captureForEmail(type) {
       }
     });
 
-    html2canvas(panel, { scale: 1.5, backgroundColor: '#f0f2f5' }).then(canvas => {
+    html2canvas(panel, { scale: 1, backgroundColor: '#f0f2f5' }).then(canvas => {
       hiddenSections.forEach(sec => { sec.style.display = ''; });
       restore();
-      resolve(canvas.toDataURL('image/jpeg', 0.7));
+      resolve(canvas.toDataURL('image/jpeg', 0.4));
     }).catch(err => {
       hiddenSections.forEach(sec => { sec.style.display = ''; });
       restore();
@@ -2375,39 +2375,26 @@ async function sendEmail(type) {
     const aaa = dayNames[now.getDay()];
     const today = now.toISOString().slice(0, 10);
 
-    // PNG 캡처
-    btn.textContent = '📧 이미지 캡처 중...';
+    // 이미지 캡처 (scale 1, JPEG 낮은 품질로 용량 최소화)
     const pngDataUrls = [];
     for (const pngType of config.pngTypes) {
       const dataUrl = await captureForEmail(pngType);
       pngDataUrls.push(dataUrl);
     }
 
-    // 히든 폼 생성 (sendForm으로 파일 첨부)
+    // 메일 본문 (HTML) — 이미지 인라인 포함
     btn.textContent = '📧 발송 중...';
-    const form = document.createElement('form');
-    form.style.display = 'none';
+    let imagesHtml = '';
+    pngDataUrls.forEach((dataUrl, i) => {
+      imagesHtml += `<p style="margin:16px 0 4px;"><strong>${config.pngLabels[i]}</strong></p>`;
+      imagesHtml += `<img src="${dataUrl}" style="max-width:100%;border:1px solid #ddd;" alt="${config.pngLabels[i]}"><br>`;
+    });
 
-    const addField = (name, value) => {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    };
-
-    // 텍스트 필드 추가 (textarea for long content)
-    addField('subject', `[업무공유] ${config.label} 개인별 누적 성과 현황_${yymmdd}`);
-    addField('to_emails', config.to);
-    addField('cc_emails', config.cc);
-
-    const msgArea = document.createElement('textarea');
-    msgArea.name = 'message';
-    msgArea.style.display = 'none';
-    msgArea.value = `<div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;font-size:14px;line-height:1.8;color:#333;">
+    const subject = `[업무공유] ${config.label} 개인별 누적 성과 현황_${yymmdd}`;
+    const message = `<div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;font-size:14px;line-height:1.8;color:#333;">
 <p>안녕하세요.<br>세일즈마케팅실 정보빈입니다.</p>
 <p>${m}/${d}(${aaa}) ${config.label} 개인별 누적 성과 공유 드립니다.</p>
-<p style="color:#888;font-size:13px;">※ 첨부 이미지를 확인해 주세요.</p>
+${imagesHtml}
 <p>이상입니다.<br>감사합니다.</p>
 <br>
 <p style="border-top:1px solid #999;padding-top:12px;margin-top:16px;font-size:13px;line-height:1.6;color:#555;">
@@ -2421,40 +2408,16 @@ Tel. 02-888-2252&nbsp;&nbsp;&nbsp;&nbsp;Fax. 02-888-2253<br><br>
 <em>내 손안의 즐거운 지식, 자발적이고 즐거운 몰입 "위버스마인드"</em>
 </p>
 </div>`;
-    form.appendChild(msgArea);
 
-    // 이미지 파일 첨부
-    for (let i = 0; i < pngDataUrls.length; i++) {
-      const blob = await (await fetch(pngDataUrls[i])).blob();
-      const fileName = `${config.label}_${config.pngLabels[i]}_${yymmdd}.jpg`;
-      const file = new File([blob], fileName, { type: 'image/jpeg' });
-      const fileInput = document.createElement('input');
-      fileInput.type = 'file';
-      fileInput.name = 'attachment';
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      fileInput.files = dt.files;
-      form.appendChild(fileInput);
-    }
+    await emailjs.send(EMAIL_SERVICE_ID, EMAIL_TEMPLATE_ID, {
+      subject,
+      message,
+      to_emails: config.to,
+      cc_emails: config.cc,
+    }, EMAIL_PUBLIC_KEY);
 
-    // HTML 파일 첨부
-    btn.textContent = '📧 HTML 생성 중...';
-    const htmlTab = type === 'main' ? 'main' : 'talkis';
-    const htmlBlob = generateHtmlBlob(htmlTab);
-    const htmlFileName = `WM_${config.label}_데일리성과_${today}.html`;
-    const htmlFile = new File([htmlBlob], htmlFileName, { type: 'text/html' });
-    const htmlInput = document.createElement('input');
-    htmlInput.type = 'file';
-    htmlInput.name = 'attachment';
-    const htmlDt = new DataTransfer();
-    htmlDt.items.add(htmlFile);
-    htmlInput.files = htmlDt.files;
-    form.appendChild(htmlInput);
-
-    btn.textContent = '📧 발송 중...';
-    document.body.appendChild(form);
-    await emailjs.sendForm(EMAIL_SERVICE_ID, EMAIL_TEMPLATE_ID, form, EMAIL_PUBLIC_KEY);
-    document.body.removeChild(form);
+    // 메일 발송 성공 후 HTML 파일 자동 다운로드
+    downloadHtml(type === 'main' ? 'main' : 'talkis');
 
     btn.textContent = '✅ 발송 완료!';
     btn.style.borderColor = '#34a853';
