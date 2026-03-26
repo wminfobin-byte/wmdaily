@@ -2339,7 +2339,16 @@ async function sendEmail(type) {
   btn.textContent = '📧 발송 중...';
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(2);
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const yymmdd = `${yy}${mm}${dd}`;
+    const m = now.getMonth() + 1;
+    const d = now.getDate();
+    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+    const aaa = dayNames[now.getDay()];
+    const today = now.toISOString().slice(0, 10);
 
     // PNG 캡처
     const pngDataUrls = [];
@@ -2354,9 +2363,12 @@ async function sendEmail(type) {
       data: dataUrl.split(',')[1],
     }));
 
+    const subject = `[업무공유] ${config.label} 개인별 누적 성과 현황_${yymmdd}`;
+    const message = `안녕하세요.\n세일즈마케팅실 정보빈입니다.\n\n${m}/${d}(${aaa}) ${config.label} 개인별 누적 성과 공유 드립니다.\n\n이상입니다.\n감사합니다.\n\n________________________________________________________________________\n정보빈  l  Bobeen Jung\n세일즈마케팅실 / 사원\ninfo_bin@weaversmind.com\nMobile. 010-7278-5096\n\n㈜위버스마인드\n152-741 서울시 구로구 디지털로30길 28 914호(구로동, 마리오타워)\nTel. 02-888-2252    Fax. 02-888-2253\n\n\n내 손안의 즐거운 지식, 자발적이고 즐거운 몰입 "위버스마인드"`;
+
     const templateParams = {
-      subject: `WM ${config.label} 데일리 마감 성과 (${today})`,
-      message: `${today} WM ${config.label} 데일리 마감 성과입니다.\n\n배포 사이트: ${SITE_URL}`,
+      subject,
+      message,
       to_emails: config.to,
       cc_emails: config.cc,
     };
