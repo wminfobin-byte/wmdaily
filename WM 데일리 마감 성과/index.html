@@ -2265,7 +2265,6 @@ function downloadExcel() {
 const EMAIL_SERVICE_ID = 'service_fds8glg';
 const EMAIL_TEMPLATE_ID = 'template_ta5yarp';
 const EMAIL_PUBLIC_KEY = 'zIYS4zSWWZo-h6wlW';
-const SITE_URL = 'https://wminfobin-byte.github.io/wm_daily/WM%20%EB%8D%B0%EC%9D%BC%EB%A6%AC%20%EB%A7%88%EA%B0%90%20%EC%84%B1%EA%B3%BC/';
 
 const EMAIL_CONFIG = {
   main: {
@@ -2292,68 +2291,6 @@ const EMAIL_CONFIG = {
   }
 };
 
-function captureForEmail(type) {
-  return new Promise((resolve, reject) => {
-    const panel = document.getElementById('tabMain');
-    const talkisPanel = document.getElementById('tabTalkis');
-
-    // 탭이 숨겨져 있으면 임시로 보이게
-    let wasHidden = false;
-    const targetPanel = type === 'talkis' ? talkisPanel : panel;
-    if (targetPanel && !targetPanel.classList.contains('active')) {
-      targetPanel.style.display = 'block';
-      targetPanel.style.position = 'absolute';
-      targetPanel.style.left = '-9999px';
-      wasHidden = true;
-    }
-
-    function restore() {
-      if (wasHidden && targetPanel) {
-        targetPanel.style.display = '';
-        targetPanel.style.position = '';
-        targetPanel.style.left = '';
-      }
-    }
-
-    if (type === 'talkis') {
-      if (!talkisPanel || !talkisPanel.innerHTML) { restore(); reject('톡이즈 데이터 없음'); return; }
-      html2canvas(talkisPanel, { scale: 1, backgroundColor: '#f0f2f5' }).then(canvas => {
-        restore();
-        resolve(canvas.toDataURL('image/jpeg', 0.4));
-      }).catch(err => { restore(); reject(err); });
-      return;
-    }
-
-    if (!panel || !panel.innerHTML) { restore(); reject('뇌새김 데이터 없음'); return; }
-
-    const engGroups = ['W그룹', 'E그룹', 'N그룹'];
-    const langGroups = ['제2외국어'];
-    const targetGroups = type === 'lang' ? langGroups : engGroups;
-
-    const sections = panel.querySelectorAll('.group-section');
-    const hiddenSections = [];
-    sections.forEach(sec => {
-      const header = sec.querySelector('.group-header');
-      if (!header) return;
-      const groupName = header.textContent.replace(/\d+명$/, '').trim();
-      if (!targetGroups.includes(groupName)) {
-        sec.style.display = 'none';
-        hiddenSections.push(sec);
-      }
-    });
-
-    html2canvas(panel, { scale: 1, backgroundColor: '#f0f2f5' }).then(canvas => {
-      hiddenSections.forEach(sec => { sec.style.display = ''; });
-      restore();
-      resolve(canvas.toDataURL('image/jpeg', 0.4));
-    }).catch(err => {
-      hiddenSections.forEach(sec => { sec.style.display = ''; });
-      restore();
-      reject(err);
-    });
-  });
-}
-
 async function sendEmail(type) {
   const config = EMAIL_CONFIG[type];
   if (!config) return;
@@ -2373,41 +2310,10 @@ async function sendEmail(type) {
     const d = now.getDate();
     const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
     const aaa = dayNames[now.getDay()];
-    const today = now.toISOString().slice(0, 10);
 
-    // 이미지 캡처 (scale 1, JPEG 낮은 품질로 용량 최소화)
-    const pngDataUrls = [];
-    for (const pngType of config.pngTypes) {
-      const dataUrl = await captureForEmail(pngType);
-      pngDataUrls.push(dataUrl);
-    }
-
-    // 메일 본문 (HTML) — 이미지 인라인 포함
     btn.textContent = '📧 발송 중...';
-    let imagesHtml = '';
-    pngDataUrls.forEach((dataUrl, i) => {
-      imagesHtml += `<p style="margin:16px 0 4px;"><strong>${config.pngLabels[i]}</strong></p>`;
-      imagesHtml += `<img src="${dataUrl}" style="max-width:100%;border:1px solid #ddd;" alt="${config.pngLabels[i]}"><br>`;
-    });
-
     const subject = `[업무공유] ${config.label} 개인별 누적 성과 현황_${yymmdd}`;
-    const message = `<div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;font-size:14px;line-height:1.8;color:#333;">
-<p>안녕하세요.<br>세일즈마케팅실 정보빈입니다.</p>
-<p>${m}/${d}(${aaa}) ${config.label} 개인별 누적 성과 공유 드립니다.</p>
-${imagesHtml}
-<p>이상입니다.<br>감사합니다.</p>
-<br>
-<p style="border-top:1px solid #999;padding-top:12px;margin-top:16px;font-size:13px;line-height:1.6;color:#555;">
-<strong>정보빈</strong>  l  Bobeen Jung<br>
-세일즈마케팅실 / 사원<br>
-<a href="mailto:info_bin@weaversmind.com">info_bin@weaversmind.com</a><br>
-Mobile. 010-7278-5096<br><br>
-㈜위버스마인드<br>
-152-741 서울시 구로구 디지털로30길 28 914호(구로동, 마리오타워)<br>
-Tel. 02-888-2252&nbsp;&nbsp;&nbsp;&nbsp;Fax. 02-888-2253<br><br>
-<em>내 손안의 즐거운 지식, 자발적이고 즐거운 몰입 "위버스마인드"</em>
-</p>
-</div>`;
+    const message = `안녕하세요.\n세일즈마케팅실 정보빈입니다.\n\n${m}/${d}(${aaa}) ${config.label} 개인별 누적 성과 공유 드립니다.\n\n▶ 대시보드: https://wminfobin-byte.github.io/wm_daily/\n\n이상입니다.\n감사합니다.\n\n________________________________________________________________________\n정보빈  l  Bobeen Jung\n세일즈마케팅실 / 사원\ninfo_bin@weaversmind.com\nMobile. 010-7278-5096\n\n㈜위버스마인드\n152-741 서울시 구로구 디지털로30길 28 914호(구로동, 마리오타워)\nTel. 02-888-2252    Fax. 02-888-2253\n\n내 손안의 즐거운 지식, 자발적이고 즐거운 몰입 "위버스마인드"`;
 
     await emailjs.send(EMAIL_SERVICE_ID, EMAIL_TEMPLATE_ID, {
       subject,
@@ -2416,7 +2322,10 @@ Tel. 02-888-2252&nbsp;&nbsp;&nbsp;&nbsp;Fax. 02-888-2253<br><br>
       cc_emails: config.cc,
     }, EMAIL_PUBLIC_KEY);
 
-    // 메일 발송 성공 후 HTML 파일 자동 다운로드
+    // 메일 발송 성공 후 PNG + HTML 자동 다운로드
+    for (const pngType of config.pngTypes) {
+      downloadPng(pngType);
+    }
     downloadHtml(type === 'main' ? 'main' : 'talkis');
 
     btn.textContent = '✅ 발송 완료!';
