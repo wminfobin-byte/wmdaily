@@ -2193,8 +2193,7 @@ function downloadPng(type) {
   });
 }
 
-function downloadHtml(tab) {
-  // 다운로드할 탭을 활성 상태로 전환
+function generateHtmlBlob(tab) {
   const prevTab = currentTab;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -2204,14 +2203,8 @@ function downloadHtml(tab) {
   currentTab = tab;
   displayKpi(tab);
 
-  const tabName = tab === 'main' ? '뇌새김' : '톡이즈';
   const html = document.documentElement.outerHTML;
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const link = document.createElement('a');
-  link.download = `WM_${tabName}_데일리성과_${new Date().toISOString().slice(0,10)}.html`;
-  link.href = URL.createObjectURL(blob);
-  link.click();
-  URL.revokeObjectURL(link.href);
 
   // 원래 탭으로 복원
   if (prevTab !== tab) {
@@ -2223,6 +2216,17 @@ function downloadHtml(tab) {
     currentTab = prevTab;
     displayKpi(prevTab);
   }
+  return blob;
+}
+
+function downloadHtml(tab) {
+  const tabName = tab === 'main' ? '뇌새김' : '톡이즈';
+  const blob = generateHtmlBlob(tab);
+  const link = document.createElement('a');
+  link.download = `WM_${tabName}_데일리성과_${new Date().toISOString().slice(0,10)}.html`;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 function downloadExcel() {
@@ -2419,7 +2423,7 @@ Tel. 02-888-2252&nbsp;&nbsp;&nbsp;&nbsp;Fax. 02-888-2253<br><br>
 </div>`;
     form.appendChild(msgArea);
 
-    // 파일 첨부
+    // 이미지 파일 첨부
     for (let i = 0; i < pngDataUrls.length; i++) {
       const blob = await (await fetch(pngDataUrls[i])).blob();
       const fileName = `${config.label}_${config.pngLabels[i]}_${yymmdd}.jpg`;
@@ -2433,6 +2437,21 @@ Tel. 02-888-2252&nbsp;&nbsp;&nbsp;&nbsp;Fax. 02-888-2253<br><br>
       form.appendChild(fileInput);
     }
 
+    // HTML 파일 첨부
+    btn.textContent = '📧 HTML 생성 중...';
+    const htmlTab = type === 'main' ? 'main' : 'talkis';
+    const htmlBlob = generateHtmlBlob(htmlTab);
+    const htmlFileName = `WM_${config.label}_데일리성과_${today}.html`;
+    const htmlFile = new File([htmlBlob], htmlFileName, { type: 'text/html' });
+    const htmlInput = document.createElement('input');
+    htmlInput.type = 'file';
+    htmlInput.name = 'attachment';
+    const htmlDt = new DataTransfer();
+    htmlDt.items.add(htmlFile);
+    htmlInput.files = htmlDt.files;
+    form.appendChild(htmlInput);
+
+    btn.textContent = '📧 발송 중...';
     document.body.appendChild(form);
     await emailjs.sendForm(EMAIL_SERVICE_ID, EMAIL_TEMPLATE_ID, form, EMAIL_PUBLIC_KEY);
     document.body.removeChild(form);
