@@ -1,0 +1,2518 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WM 그룹별/개인별 데일리 성과</title>
+<link rel="icon" id="favicon" type="image/png" href="logo.png">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: #f0f2f5; color: #333; }
+
+  /* Header */
+  .header { background: #0F243E; color: #fff; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .header-left img { height: 32px; }
+  .header h1 { font-size: 22px; font-weight: 600; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .header-right .last-update { font-size: 12px; opacity: 0.8; }
+  .btn-upload-open { padding: 8px 16px; border: 1px solid rgba(255,255,255,0.5); border-radius: 8px; background: rgba(255,255,255,0.15); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-upload-open:hover { background: rgba(255,255,255,0.3); }
+
+  /* Modal overlay */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+  .modal-overlay.active { display: flex; }
+  .modal { background: #fff; border-radius: 16px; padding: 32px; max-width: 720px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+  .modal h2 { font-size: 18px; margin-bottom: 20px; color: #333; }
+  .modal-close { float: right; background: none; border: none; font-size: 24px; cursor: pointer; color: #999; line-height: 1; }
+  .modal-close:hover { color: #333; }
+
+  /* Upload boxes inside modal */
+  .upload-grid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+  .upload-box { display: flex; align-items: center; gap: 14px; background: #f8f9fa; border: 2px dashed #ccc; border-radius: 12px; padding: 14px 18px; cursor: pointer; transition: all 0.2s; position: relative; }
+  .upload-box:hover { border-color: #1a73e8; background: #f0f4ff; }
+  .upload-box.loaded { border-color: #34a853; border-style: solid; background: #f0faf3; }
+  .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-box .icon { font-size: 24px; flex-shrink: 0; }
+  .upload-box .upload-info { flex: 1; min-width: 0; }
+  .upload-box .label { font-size: 13px; font-weight: 600; color: #555; }
+  .upload-box .sub { font-size: 11px; color: #999; margin-top: 2px; }
+  .upload-box .badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 4px; margin-right: 5px; vertical-align: middle; line-height: 17px; }
+  .badge-overwrite { background: #fff3e0; color: #e67700; border: 1px solid #e6770044; }
+  .badge-accumulate { background: #e8f0fe; color: #1a73e8; border: 1px solid #1a73e844; }
+  .upload-box .status { font-size: 11px; color: #34a853; font-weight: 600; margin-top: 4px; display: none; }
+  .upload-box.loaded .status { display: block; }
+  .upload-box .progress-bar { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; margin-top: 8px; overflow: hidden; display: none; }
+  .upload-box .progress-bar.active { display: block; }
+  .upload-box .progress-fill { height: 100%; background: #1a73e8; border-radius: 2px; transition: width 0.3s ease; width: 0%; }
+  .upload-box .progress-fill.done { background: #34a853; }
+  .upload-box .btn-clear { position: absolute; top: 6px; right: 6px; background: none; border: none; color: #ccc; font-size: 14px; cursor: pointer; padding: 2px 5px; border-radius: 4px; z-index: 2; display: none; }
+  .upload-box.loaded .btn-clear { display: block; }
+  .upload-box .btn-clear:hover { color: #ea4335; background: #fde7e9; }
+
+  /* File list inside upload box */
+  .file-list { margin-top: 8px; text-align: left; max-height: 120px; overflow-y: auto; }
+  .file-item { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; color: #333; }
+  .file-item .file-icon { color: #34a853; font-size: 13px; }
+  .file-item .file-name { font-weight: 500; word-break: break-all; }
+  .file-item .file-count { color: #1a73e8; font-weight: 600; white-space: nowrap; }
+  .file-item .btn-file-del { background: none; border: 1px solid #ddd; color: #999; font-size: 10px; cursor: pointer; padding: 0 4px; border-radius: 3px; line-height: 16px; flex-shrink: 0; }
+  .file-item .btn-file-del:hover { color: #ea4335; border-color: #ea4335; background: #fde7e9; }
+
+  /* Storage panel inside modal */
+  .storage-row { padding: 12px 0; font-size: 13px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px solid #eee; margin-top: 8px; }
+  .storage-row .storage-label { font-weight: 600; color: #555; }
+  .storage-row .storage-dates { color: #1a73e8; }
+  .storage-row button { padding: 4px 12px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; }
+  .storage-row button:hover { background: #f5f5f5; }
+  .storage-row button.danger { color: #ea4335; border-color: #ea4335; }
+  .storage-row button.danger:hover { background: #fde7e9; }
+
+  /* Status bar inside modal */
+  .modal .msg { padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-top: 8px; }
+  .msg-success { background: #e6f4ea; color: #1e7e34; }
+  .msg-warn { background: #fff8e1; color: #e65100; }
+  .msg-error { background: #fde7e9; color: #c62828; }
+
+  /* Main content */
+  .main-content { padding: 24px 32px 32px; }
+  .info-bar { background: #fff; border-radius: 10px; padding: 14px 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); font-size: 13px; color: #555; display: flex; gap: 24px; flex-wrap: wrap; }
+  .info-bar strong { color: #333; }
+
+  /* Tabs */
+  .tab-bar { display: flex; align-items: center; gap: 0; margin-bottom: 16px; }
+  .tab-btn { padding: 10px 24px; border: 1px solid #ddd; border-bottom: none; border-radius: 8px 8px 0 0; background: #f5f5f5; color: #666; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .tab-btn:hover { background: #e8eaf6; }
+  .tab-btn.active { background: #fff; color: #1a73e8; border-color: #ccc; border-bottom: 2px solid #fff; margin-bottom: -1px; z-index: 1; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Performance table styles */
+  .group-section { margin-bottom: 24px; }
+  .group-header { font-size: 14px; font-weight: 700; padding: 8px 14px; border-radius: 8px 8px 0 0; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+  .group-header .group-count { font-size: 13px; font-weight: 400; opacity: 0.85; }
+  .group-header.w-group { background: #1565c0; }
+  .group-header.e-group { background: #1e88e5; }
+  .group-header.n-group { background: #42a5f5; }
+  .group-header.lang-group { background: #81c784; color: #fff; }
+  .group-header.talkis-group { background: #b39ddb; color: #fff; }
+
+  .perf-table-wrap { overflow-x: auto; background: #fff; border-radius: 0 0 10px 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); border: 1px solid #e0e0e0; border-top: none; }
+  .perf-table { font-size: 13px; min-width: 1500px; width: 100%; border-collapse: collapse; }
+  .perf-table th { padding: 4px 6px; text-align: center; font-size: 12px; font-weight: 600; color: #555; border-bottom: 1px solid #ddd; border-right: 1px solid #eee; white-space: nowrap; cursor: default; }
+  .perf-table th:last-child { border-right: none; }
+  .perf-table td { padding: 3px 6px; text-align: center; font-size: 13px; border-bottom: 1px solid #eee; border-right: 1px solid #f5f5f5; }
+  .perf-table td:last-child { border-right: none; }
+  .perf-table tbody tr:hover td { background: #f0f4ff; }
+  .perf-table tbody tr:nth-child(even) td { background: #fafbfc; }
+  .perf-table tbody tr:nth-child(even):hover td { background: #f0f4ff; }
+  .perf-table td.name-cell { text-align: center; font-weight: 600; white-space: nowrap; }
+  .perf-table td.left { text-align: center; }
+  .perf-table .section-header th { font-size: 13px; font-weight: 700; border-bottom: 2px solid #ccc; padding: 5px 6px; }
+  .perf-table .sub-header th { background: #f5f7fa; border-bottom: 2px solid #ddd; }
+  .perf-table tr.total-row td { background: #eef1f5; font-weight: 700; border-top: 2px solid #aaa; }
+  .perf-table .rate-cell { font-weight: 600; }
+  .perf-table .highlight { color: #1a73e8; font-weight: 700; }
+  .perf-table .rank-change { font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .perf-table .rank-up { color: #1a73e8; }
+  .perf-table .rank-down { color: #c62828; }
+  .perf-table .rank-same { color: #bbb; }
+
+  .empty-state { text-align: center; color: #888; padding: 80px 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .empty-state p { margin-top: 8px; font-size: 14px; }
+
+  .hidden { display: none !important; }
+
+  /* Filter bar */
+  .filter-bar { background: #fff; border-radius: 12px; padding: 14px 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .filter-row label.filter-label { font-size: 13px; font-weight: 600; color: #555; white-space: nowrap; }
+  .filter-row input[type="date"] { padding: 4px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+  .filter-row .sep { font-size: 12px; color: #999; }
+  .quick-btns { display: flex; gap: 3px; flex-wrap: wrap; }
+  .quick-btn { padding: 5px 12px; border: 1px solid #ccc; border-radius: 5px; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+  .quick-btn:hover { background: #f0f4ff; border-color: #1a73e8; }
+  .quick-btn.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .filter-divider { width: 1px; height: 20px; background: #ddd; margin: 0 4px; }
+
+  /* Global filters */
+  .filter-dropdown { position: relative; display: flex; align-items: center; gap: 4px; }
+  .filter-dropdown .filter-label { font-size: 13px; font-weight: 600; color: #555; white-space: nowrap; }
+  .filter-dropdown-btn { padding: 5px 12px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+  .filter-dropdown-btn:hover { border-color: #1a73e8; }
+  .filter-dropdown-btn .count-badge { background: #1a73e8; color: #fff; border-radius: 10px; padding: 2px 8px; font-size: 13px; }
+  .filter-panel { display: none; position: absolute; top: 100%; left: 0; z-index: 100; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); min-width: 180px; max-height: 260px; overflow-y: auto; padding: 6px 0; margin-top: 4px; }
+  .filter-panel.open { display: block; }
+  .filter-panel label { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+  .filter-panel label:hover { background: #f5f7fa; }
+  .filter-panel .select-all { border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 4px; font-weight: 600; }
+  .filter-search { padding: 4px 10px; margin: 4px 8px 6px; }
+  .filter-search input { width: 100%; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; outline: none; }
+  .filter-search input:focus { border-color: #1a73e8; }
+
+  /* KPI cards */
+  .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .kpi-card { flex: 1; min-width: 130px; max-width: 200px; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; text-align: center; }
+  .kpi-card .kpi-label { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .kpi-card .kpi-value { font-size: 22px; font-weight: 800; }
+  .kpi-card.kpi-db .kpi-label { color: #2e7d32; }
+  .kpi-card.kpi-db .kpi-value { color: #2e7d32; }
+  .kpi-card.kpi-daily .kpi-label { color: #e65100; }
+  .kpi-card.kpi-daily .kpi-value { color: #e65100; }
+  .kpi-card.kpi-actual .kpi-label { color: #ef5350; }
+  .kpi-card.kpi-actual .kpi-value { color: #ef5350; }
+  .kpi-card.kpi-rate .kpi-label { color: #c62828; }
+  .kpi-card.kpi-rate .kpi-value { color: #c62828; }
+  .kpi-row-label { font-size: 12px; font-weight: 600; color: #666; margin: 8px 0 4px; }
+
+  /* Date range calendar */
+  .date-range-picker { position: relative; display: inline-flex; align-items: center; }
+  .date-range-display { padding: 4px 12px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; min-width: 210px; text-align: center; white-space: nowrap; }
+  .date-range-display:hover { border-color: #1a73e8; }
+  .calendar-popup { display: none; position: absolute; top: 100%; left: 0; z-index: 200; background: #fff; border: 1px solid #ddd; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); padding: 14px; margin-top: 4px; min-width: 280px; user-select: none; }
+  .calendar-popup.open { display: block; }
+  .calendar-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .calendar-nav button { background: none; border: none; cursor: pointer; font-size: 16px; padding: 4px 8px; border-radius: 4px; color: #555; }
+  .calendar-nav button:hover { background: #f0f4ff; color: #1a73e8; }
+  .calendar-nav .cal-title { font-size: 14px; font-weight: 700; color: #333; }
+  .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; text-align: center; }
+  .calendar-grid .day-header { font-size: 11px; font-weight: 600; color: #999; padding: 4px 0; }
+  .calendar-grid .day-cell { font-size: 12px; padding: 7px 4px; border-radius: 6px; cursor: pointer; transition: background 0.1s; }
+  .calendar-grid .day-cell:hover { background: #e3f2fd; }
+  .calendar-grid .day-cell.selected-start { background: #1a73e8; color: #fff; font-weight: 700; }
+  .calendar-grid .day-cell.selected-end { background: #1a73e8; color: #fff; font-weight: 700; }
+  .calendar-grid .day-cell.in-range { background: #e3f2fd; }
+  .calendar-grid .day-cell.other-month { color: #ccc; }
+  .calendar-grid .day-cell.today { font-weight: 700; box-shadow: inset 0 0 0 1px #1a73e8; }
+  .cal-hint { font-size: 11px; color: #1a73e8; text-align: center; margin-top: 8px; font-weight: 600; }
+
+  /* Debug detail modal */
+  .detail-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 2000; justify-content: center; align-items: center; }
+  .detail-overlay.active { display: flex; }
+  .detail-modal { background: #fff; border-radius: 12px; padding: 24px; max-width: 700px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+  .detail-modal h3 { margin-bottom: 12px; font-size: 15px; }
+  .detail-modal table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .detail-modal th, .detail-modal td { padding: 5px 8px; border: 1px solid #eee; text-align: center; }
+  .detail-modal th { background: #f5f7fa; font-weight: 600; }
+  .detail-modal .cancelled { color: #c62828; text-decoration: line-through; }
+  .detail-modal .close-btn { float: right; background: none; border: none; font-size: 20px; cursor: pointer; color: #999; }
+  .detail-modal .close-btn:hover { color: #333; }
+
+  /* Download buttons */
+  .tab-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+  .btn-download { padding: 6px 14px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; font-weight: 600; color: #555; transition: all 0.15s; display: flex; align-items: center; gap: 4px; }
+  .btn-download:hover { border-color: #1a73e8; color: #1a73e8; background: #f0f4ff; }
+
+  @media (max-width: 768px) {
+    .header { flex-direction: column; gap: 12px; align-items: flex-start; }
+    .main-content { padding: 16px; }
+    .upload-grid { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <img src="logo.png" alt="WM">
+    <h1>WM 그룹별/개인별 데일리 성과</h1>
+  </div>
+  <div class="header-right">
+    <span class="last-update" id="lastUpdate"></span>
+    <span id="syncTime" style="font-size:11px;opacity:0.7;display:none;"></span>
+    <button class="btn-upload-open" id="btnSync" style="display:none;" onclick="syncToGitHub()">🔄 동기화</button>
+    <button class="btn-upload-open" id="btnAdmin" onclick="openModal()">관리자 로그인</button>
+  </div>
+</div>
+
+<!-- Auth Modal -->
+<div class="modal-overlay" id="authModal">
+  <div class="modal" style="max-width:360px;text-align:center;">
+    <button class="modal-close" onclick="document.getElementById('authModal').classList.remove('active')">&times;</button>
+    <h2 style="margin-bottom:16px;">업로드 인증</h2>
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:center;">
+      <input type="text" id="authId" placeholder="아이디" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
+      <input type="password" id="authPw" placeholder="비밀번호" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authLogin()">
+      <div id="authError" style="color:#c62828;font-size:12px;display:none;">아이디 또는 비밀번호가 일치하지 않습니다.</div>
+      <button onclick="authLogin()" style="width:100%;padding:10px;border:none;border-radius:6px;background:#1a73e8;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">로그인</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Modal -->
+<div class="modal-overlay" id="uploadModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <h2>데이터 업로드</h2>
+    <div class="upload-grid">
+      <div class="upload-box" id="uploadRoster">
+        <button class="btn-clear" onclick="clearRoster(event)" title="명단 초기화">✕</button>
+        <div class="icon">👥</div>
+        <div class="upload-info">
+          <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>명단 파일 <span class="sub">WM_근태보고_그룹_yyyymm.xls</span></div>
+          <div class="status" id="rosterStatus"></div>
+          <div class="file-list" id="rosterFileList"></div>
+          <div class="progress-bar" id="progressRoster"><div class="progress-fill"></div></div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" id="fileRoster">
+      </div>
+      <div class="upload-box" id="uploadDb">
+        <button class="btn-clear" onclick="clearDb(event)" title="DB수 초기화">✕</button>
+        <div class="icon">📂</div>
+        <div class="upload-info">
+          <div class="label"><span class="badge badge-accumulate">누적 저장</span>DB수 파일 (일일) <span class="sub">WM_고객관리_yyyy-mm-dd.xlsx</span></div>
+          <div class="status" id="dbStatus"></div>
+          <div class="file-list" id="dbFileList"></div>
+          <div class="progress-bar" id="progressDb"><div class="progress-fill"></div></div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" id="fileDb" multiple>
+      </div>
+      <div class="upload-box" id="uploadContract">
+        <button class="btn-clear" onclick="clearContract(event)" title="계약수 초기화">✕</button>
+        <div class="icon">📋</div>
+        <div class="upload-info">
+          <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>계약수 파일 (월 누적) <span class="sub">신청자관리_yyyy-mm-dd.xls</span></div>
+          <div class="status" id="contractStatus"></div>
+          <div class="file-list" id="contractFileList"></div>
+          <div class="progress-bar" id="progressContract"><div class="progress-fill"></div></div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" id="fileContract">
+      </div>
+    </div>
+    <div class="storage-row">
+      <span class="storage-label">저장 현황:</span>
+      <span class="storage-dates" id="storageDates">없음</span>
+      <button onclick="refreshStorageDisplay()">새로고침</button>
+      <button class="danger" onclick="clearStorage()">전체 초기화</button>
+    </div>
+    <div class="storage-row" style="flex-direction:column;align-items:flex-start;gap:6px;">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="storage-label">DB수 파일 아카이브:</span>
+        <button onclick="toggleArchiveList()">목록 보기</button>
+        <button class="danger" onclick="clearArchive()">아카이브 삭제</button>
+      </div>
+      <div id="archiveList" style="display:none;width:100%;max-height:200px;overflow-y:auto;font-size:12px;"></div>
+    </div>
+    <div id="statusBar"></div>
+  </div>
+</div>
+
+<!-- GitHub Token Modal -->
+<div class="modal-overlay" id="tokenModal">
+  <div class="modal" style="max-width:420px;text-align:center;">
+    <button class="modal-close" onclick="document.getElementById('tokenModal').classList.remove('active')">&times;</button>
+    <h2 style="margin-bottom:8px;">GitHub 동기화 설정</h2>
+    <p style="font-size:13px;color:#666;margin-bottom:16px;">최초 1회만 설정하면 이후엔 버튼만 누르면 됩니다.</p>
+    <div style="display:flex;flex-direction:column;gap:10px;align-items:center;">
+      <input type="password" id="ghToken" placeholder="GitHub Personal Access Token" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
+      <div id="tokenError" style="color:#c62828;font-size:12px;display:none;"></div>
+      <button onclick="saveTokenAndSync()" style="width:100%;padding:10px;border:none;border-radius:6px;background:#34a853;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">저장 후 동기화</button>
+      <details style="width:100%;text-align:left;font-size:12px;color:#888;">
+        <summary style="cursor:pointer;">토큰 발급 방법</summary>
+        <ol style="margin:8px 0 0 16px;line-height:1.8;">
+          <li>GitHub → Settings → Developer settings</li>
+          <li>Personal access tokens → Fine-grained tokens → Generate</li>
+          <li>Repository access: <strong>wm_daily</strong> 선택</li>
+          <li>Permissions → Contents: <strong>Read and write</strong></li>
+          <li>Generate token → 복사 후 위에 붙여넣기</li>
+        </ol>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- Main Content -->
+<div class="main-content" id="mainContent">
+  <div id="filterSection" class="hidden">
+    <div class="filter-bar">
+      <div class="filter-row">
+        <label class="filter-label">기간 :</label>
+        <div class="date-range-picker">
+          <input type="hidden" id="dateStart">
+          <input type="hidden" id="dateEnd">
+          <button type="button" class="date-range-display" id="dateRangeBtn" onclick="toggleCalendar()">
+            <span id="dateRangeText">기간 선택</span>
+          </button>
+          <div class="calendar-popup" id="calendarPopup">
+            <div class="calendar-nav">
+              <button type="button" onclick="calNavMonth(-1)">◀</button>
+              <span class="cal-title" id="calTitle"></span>
+              <button type="button" onclick="calNavMonth(1)">▶</button>
+            </div>
+            <div class="calendar-grid" id="calendarGrid"></div>
+            <div class="cal-hint" id="calHint">시작일을 선택하세요</div>
+          </div>
+        </div>
+        <div class="quick-btns">
+          <button class="quick-btn" onclick="setQuickDate('today', this)">당일</button>
+          <button class="quick-btn" onclick="setQuickDate('lastBizDay', this)">전영업일</button>
+          <button class="quick-btn active" onclick="setQuickDate('thisMonth', this)">이번달</button>
+          <button class="quick-btn" onclick="setQuickDate('1m', this)">1개월</button>
+          <button class="quick-btn" onclick="setQuickDate('3m', this)">3개월</button>
+          <button class="quick-btn" onclick="setQuickDate('6m', this)">6개월</button>
+          <button class="quick-btn" onclick="setQuickDate('12m', this)">12개월</button>
+          <button class="quick-btn" onclick="setQuickDate('all', this)">전체</button>
+        </div>
+        <div class="filter-divider"></div>
+        <div class="filter-dropdown" data-filter="group">
+          <span class="filter-label">그룹 :</span>
+          <button class="filter-dropdown-btn" onclick="toggleFilterPanel(this)"><span class="count-badge">전체</span> ▾</button>
+          <div class="filter-panel" id="filterPanelGroup"></div>
+        </div>
+        <div class="filter-dropdown" data-filter="center">
+          <span class="filter-label">센터 :</span>
+          <button class="filter-dropdown-btn" onclick="toggleFilterPanel(this)"><span class="count-badge">전체</span> ▾</button>
+          <div class="filter-panel" id="filterPanelCenter"></div>
+        </div>
+        <div class="filter-dropdown" data-filter="team">
+          <span class="filter-label">팀 :</span>
+          <button class="filter-dropdown-btn" onclick="toggleFilterPanel(this)"><span class="count-badge">전체</span> ▾</button>
+          <div class="filter-panel" id="filterPanelTeam"></div>
+        </div>
+        <div class="filter-dropdown" data-filter="person">
+          <span class="filter-label">개인 :</span>
+          <button class="filter-dropdown-btn" onclick="toggleFilterPanel(this)"><span class="count-badge">전체</span> ▾</button>
+          <div class="filter-panel" id="filterPanelPerson"></div>
+        </div>
+      </div>
+      <div class="kpi-row-label" id="kpiFilteredLabel">조회 기간</div>
+      <div class="kpi-row">
+        <div class="kpi-card kpi-db"><div class="kpi-label">📋 DB수</div><div class="kpi-value" id="kpiFDb">0</div></div>
+        <div class="kpi-card kpi-daily"><div class="kpi-label">⚡ 일계약수</div><div class="kpi-value" id="kpiFDaily">0</div></div>
+        <div class="kpi-card kpi-actual"><div class="kpi-label">✅ 실계약수</div><div class="kpi-value" id="kpiFActual">0</div></div>
+        <div class="kpi-card kpi-rate"><div class="kpi-label">📈 실계약률</div><div class="kpi-value" id="kpiFRate">-</div></div>
+      </div>
+      <div class="kpi-row-label" id="kpiGlobalLabel">최근 영업일</div>
+      <div class="kpi-row">
+        <div class="kpi-card kpi-db"><div class="kpi-label">📋 DB수</div><div class="kpi-value" id="kpiGDb">0</div></div>
+        <div class="kpi-card kpi-daily"><div class="kpi-label">⚡ 일계약수</div><div class="kpi-value" id="kpiGDaily">0</div></div>
+        <div class="kpi-card kpi-actual"><div class="kpi-label">✅ 실계약수</div><div class="kpi-value" id="kpiGActual">0</div></div>
+        <div class="kpi-card kpi-rate"><div class="kpi-label">📈 실계약률</div><div class="kpi-value" id="kpiGRate">-</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="empty-state" id="emptyState">
+    <div style="font-size:48px; margin-bottom:12px;">📊</div>
+    <p>우측 상단 <strong>데이터 업로드</strong> 버튼을 눌러<br>명단, DB수, 계약수 파일을 업로드해주세요.</p>
+  </div>
+  <div id="dashboardArea" class="hidden">
+    <div class="tab-bar" id="tabBar">
+      <button class="tab-btn active" onclick="switchTab('main', this)">뇌새김</button>
+      <button class="tab-btn" onclick="switchTab('talkis', this)">톡이즈</button>
+      <div class="tab-actions">
+        <button class="btn-download" onclick="downloadPng('eng')">🖼️ PNG(영어)</button>
+        <button class="btn-download" onclick="downloadPng('lang')">🖼️ PNG(제2외국어)</button>
+        <button class="btn-download" onclick="downloadPng('talkis')">🖼️ PNG(톡이즈)</button>
+        <button class="btn-download" onclick="downloadExcel()">📊 Excel 다운로드</button>
+        <button class="btn-download" onclick="downloadHtml('main')">🌐 HTML(뇌새김)</button>
+        <button class="btn-download" onclick="downloadHtml('talkis')">🌐 HTML(톡이즈)</button>
+      </div>
+    </div>
+    <div class="tab-panel active" id="tabMain"></div>
+    <div class="tab-panel" id="tabTalkis"></div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+// ── State ──
+// ══════════════════════════════════════════════
+let contractData = null;
+let contractByMonth = {};
+let rosterMap = null;         // current active roster (latest month)
+let rosterByMonth = {};       // { 'YYYY-MM': Map(name → info) }
+let todayDbDate = null;
+let lastBuildDebug = {};  // { personName: { holDetails: [...] } }
+let currentTab = 'main';      // 'main' (뇌새김) or 'talkis'
+let kpiByTab = { main: null, talkis: null }; // cached KPI per tab
+let globalLatestDate = null;  // 업로드된 날짜 중 가장 최근 (전영업일)
+let fileJustUploaded = false; // 파일 업로드 직후에만 true
+
+// 명단 제외 대상
+const ROSTER_EXCLUDE = new Set(['(R_송내)유현미', '(R_송내)허선정', '(R_송내)이영혜', '(R_송내)이미현']);
+
+// ── Column indices for RAW CMS files (0-based) ──
+const DB_COL = {
+  customerKey: 6, obName: 7, distributeDate: 8, inflowDate: 9,
+  dbInfo: 15, mediaCode: 19, package: 20, orderDate: 23,
+  mainGift: 27, customerStatus: 29
+};
+const CT_COL = {
+  customerKey: 3, manager: 13, dbDate: 14, applicationDate: 15,
+  category: 16,
+  mainGift: 21, undeliveredGift: 22, gift: 23,
+  distributeDate: 41, returnDate: 42, brand: 71
+};
+const ROSTER_COL = { role: 0, group: 1, center: 2, team: 3, name: 4, hireDate: 5 };
+
+// ── Korean Public Holidays (2025-2026) ──
+const KOREAN_HOLIDAYS = new Set([
+  '2025-01-01','2025-01-28','2025-01-29','2025-01-30',
+  '2025-03-01','2025-03-03',
+  '2025-05-05','2025-05-06','2025-06-06',
+  '2025-08-15',
+  '2025-10-03','2025-10-05','2025-10-06','2025-10-07','2025-10-08','2025-10-09',
+  '2025-12-25',
+  '2026-01-01',
+  '2026-02-15','2026-02-16','2026-02-17','2026-02-18',
+  '2026-03-01','2026-03-02',
+  '2026-05-05','2026-05-24','2026-05-25','2026-06-06',
+  '2026-08-15','2026-08-17',
+  '2026-09-24','2026-09-25','2026-09-26',
+  '2026-10-03','2026-10-05','2026-10-09',
+  '2026-12-25'
+]);
+
+function isHoliday(dateStr) {
+  if (!dateStr) return false;
+  if (KOREAN_HOLIDAYS.has(dateStr)) return true;
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay();
+  return day === 0 || day === 6;
+}
+
+// ══════════════════════════════════════════════
+// ── Helpers ──
+// ══════════════════════════════════════════════
+function parseDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  const s = String(val).trim();
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+function fmtDate(d) {
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function datePart(val) {
+  const d = parseDate(val);
+  return d ? fmtDate(d) : '';
+}
+function fmtRate(n, d) {
+  if (!d || d === 0) return '-';
+  return (n / d * 100).toFixed(1) + '%';
+}
+function fmtDateShort(val) {
+  const d = parseDate(val);
+  return d ? fmtDate(d) : '';
+}
+function fmtDateTime(date) {
+  const y = date.getFullYear();
+  const mo = String(date.getMonth()+1).padStart(2,'0');
+  const d = String(date.getDate()).padStart(2,'0');
+  const h = String(date.getHours()).padStart(2,'0');
+  const mi = String(date.getMinutes()).padStart(2,'0');
+  return `${y}-${mo}-${d} ${h}:${mi}`;
+}
+
+// 파일명에서 월 키 추출: "WM_근태보고_그룹_2603.xls" → "2026-03"
+function extractMonthKey(filename) {
+  const m = filename.match(/(\d{4})[\-_.]?(\d{2})/);
+  if (m) {
+    const num = m[1] + m[2];
+    // 6자리 yyyymm vs 4자리 yymm
+    if (num.length >= 6) return `${num.slice(0,4)}-${num.slice(4,6)}`;
+    // 4자리: yymm → 20yy-mm
+    return `20${num.slice(0,2)}-${num.slice(2,4)}`;
+  }
+  // fallback: 현재 월
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+}
+
+// ══════════════════════════════════════════════
+// ── Auth & Modal ──
+// ══════════════════════════════════════════════
+const _creds = [
+  { a: [97,87,53,109,98,49,57,105,97,87,52,61], b: [100,50,112,107,99,87,104,120,98,72,77,53,77,105,69,61] },
+  { a: [89,87,82,116,97,87,52,61], b: [100,50,86,104,100,109,86,121,99,122,65,121,78,84,103,104,73,81,61,61] }
+];
+let authPassed = false;
+
+function _d(arr) { return atob(arr.map(c => String.fromCharCode(c)).join('')); }
+
+function openModal() {
+  if (authPassed) {
+    document.getElementById('uploadModal').classList.add('active');
+  } else {
+    document.getElementById('authId').value = '';
+    document.getElementById('authPw').value = '';
+    document.getElementById('authError').style.display = 'none';
+    document.getElementById('authModal').classList.add('active');
+    document.getElementById('authId').focus();
+  }
+}
+
+function authLogin() {
+  const id = document.getElementById('authId').value.trim();
+  const pw = document.getElementById('authPw').value;
+  if (_creds.some(c => id === _d(c.a) && pw === _d(c.b))) {
+    authPassed = true;
+    document.getElementById('btnAdmin').textContent = '데이터 업로드';
+    document.getElementById('btnSync').style.display = '';
+    document.getElementById('syncTime').style.display = '';
+    document.getElementById('authModal').classList.remove('active');
+    document.getElementById('uploadModal').classList.add('active');
+    startAutoSync();
+  } else {
+    document.getElementById('authError').style.display = 'block';
+  }
+}
+
+function closeModal() {
+  document.getElementById('uploadModal').classList.remove('active');
+}
+document.getElementById('uploadModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+document.getElementById('authModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.target.classList.remove('active');
+});
+document.getElementById('tokenModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.target.classList.remove('active');
+});
+
+// ══════════════════════════════════════════════
+// ── Tab Switch ──
+// ══════════════════════════════════════════════
+function switchTab(tabId, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(tabId === 'main' ? 'tabMain' : 'tabTalkis').classList.add('active');
+  currentTab = tabId;
+  displayKpi(currentTab);
+}
+
+function displayKpi(tab) {
+  const data = kpiByTab[tab];
+  if (!data) return;
+  const f = data.filtered;
+  if (f) {
+    document.getElementById('kpiFDb').textContent = f.db.toLocaleString();
+    document.getElementById('kpiFDaily').textContent = f.daily.toLocaleString();
+    document.getElementById('kpiFActual').textContent = f.actual.toLocaleString();
+    document.getElementById('kpiFRate').textContent = f.db > 0 ? (f.actual / f.db * 100).toFixed(1) + '%' : '-';
+  }
+  const g = data.global;
+  if (g) {
+    document.getElementById('kpiGDb').textContent = g.db.toLocaleString();
+    document.getElementById('kpiGDaily').textContent = g.daily.toLocaleString();
+    document.getElementById('kpiGActual').textContent = g.actual.toLocaleString();
+    document.getElementById('kpiGRate').textContent = g.db > 0 ? (g.actual / g.db * 100).toFixed(1) + '%' : '-';
+  }
+  const start = document.getElementById('dateStart').value;
+  const end = document.getElementById('dateEnd').value;
+  let filterLabel = '조회 기간';
+  if (start && end) filterLabel = start === end ? `조회: ${start}` : `조회: ${start} ~ ${end}`;
+  else if (!start && !end) filterLabel = '조회: 전체 기간';
+  document.getElementById('kpiFilteredLabel').textContent = filterLabel;
+  document.getElementById('kpiGlobalLabel').textContent = globalLatestDate ? `최근 영업일: ${globalLatestDate}` : '최근 영업일';
+}
+
+// ══════════════════════════════════════════════
+// ── File Read ──
+// ══════════════════════════════════════════════
+function setProgress(barId, pct, done) {
+  const bar = document.getElementById(barId);
+  const fill = bar.querySelector('.progress-fill');
+  bar.classList.add('active');
+  fill.style.width = pct + '%';
+  if (done) fill.classList.add('done');
+  else fill.classList.remove('done');
+}
+function resetProgress(barId) {
+  const bar = document.getElementById(barId);
+  bar.classList.remove('active');
+  bar.querySelector('.progress-fill').style.width = '0%';
+  bar.querySelector('.progress-fill').classList.remove('done');
+}
+
+function readExcel(file, callback, progressBarId) {
+  const reader = new FileReader();
+  if (progressBarId) {
+    setProgress(progressBarId, 0, false);
+    reader.onprogress = e => {
+      if (e.lengthComputable) setProgress(progressBarId, Math.round(e.loaded / e.total * 60), false);
+    };
+  }
+  reader.onload = e => {
+    try {
+      if (progressBarId) setProgress(progressBarId, 70, false);
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      if (progressBarId) setProgress(progressBarId, 85, false);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (progressBarId) setProgress(progressBarId, 95, false);
+      callback(raw.slice(1), e.target.result);
+      if (progressBarId) setProgress(progressBarId, 100, true);
+    } catch (err) {
+      showStatus(`파일 읽기 오류: ${err.message}`, 'error');
+      if (progressBarId) resetProgress(progressBarId);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ══════════════════════════════════════════════
+// ── IndexedDB ──
+// ══════════════════════════════════════════════
+const DB_NAME = 'dbPerfDashboard';
+const DB_VERSION = 6;
+const STORE_DATES = 'dates';
+const STORE_KEYS = 'keyMeta';
+const STORE_ROSTER = 'roster';       // key: 'YYYY-MM', value: array of roster rows
+const STORE_CONTRACT = 'contract';
+const STORE_FILEMETA = 'fileMeta';
+const STORE_ARCHIVE = 'fileArchive';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_DATES)) db.createObjectStore(STORE_DATES);
+      if (!db.objectStoreNames.contains(STORE_KEYS)) db.createObjectStore(STORE_KEYS);
+      if (!db.objectStoreNames.contains(STORE_ROSTER)) db.createObjectStore(STORE_ROSTER);
+      if (!db.objectStoreNames.contains(STORE_CONTRACT)) db.createObjectStore(STORE_CONTRACT);
+      if (!db.objectStoreNames.contains(STORE_FILEMETA)) db.createObjectStore(STORE_FILEMETA);
+      if (!db.objectStoreNames.contains(STORE_ARCHIVE)) db.createObjectStore(STORE_ARCHIVE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function loadAccumulated() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readonly');
+
+    const dates = await new Promise((resolve, reject) => {
+      const store = tx.objectStore(STORE_DATES);
+      const result = {};
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { result[cursor.key] = cursor.value; cursor.continue(); }
+        else resolve(result);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const keyMeta = await new Promise((resolve, reject) => {
+      const store = tx.objectStore(STORE_KEYS);
+      const result = {};
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { result[cursor.key] = cursor.value; cursor.continue(); }
+        else resolve(result);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    db.close();
+    return { dates, keyMeta };
+  } catch {
+    return { dates: {}, keyMeta: {} };
+  }
+}
+
+async function accumulateDbData(rows) {
+  const seen = new Set();
+  const uniqueRows = rows.filter(row => {
+    const key = String(row[DB_COL.customerKey] || '').trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  let existingKeys;
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_KEYS, 'readonly');
+    existingKeys = await new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_KEYS).getAllKeys();
+      req.onsuccess = () => resolve(new Set(req.result));
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+  } catch { existingKeys = new Set(); }
+
+  const newRows = uniqueRows.filter(row => {
+    const key = String(row[DB_COL.customerKey] || '').trim();
+    return !existingKeys.has(key);
+  });
+
+  const dupCount = rows.length - uniqueRows.length;
+  const overlapCount = uniqueRows.length - newRows.length;
+  if (dupCount > 0 || overlapCount > 0) {
+    showStatus(`중복 제거: 파일 내 ${dupCount}건, 기존 누적 데이터와 ${overlapCount}건`, 'warn');
+  }
+
+  const dateMap = {};
+  const keyEntries = [];
+
+  newRows.forEach(row => {
+    const name = String(row[DB_COL.obName] || '').trim();
+    if (!name) return;
+    // OB명에 "군자" 또는 "관리자" 포함 시 완전 제외
+    if (name.includes('군자') || name.includes('관리자')) return;
+    const distDate = datePart(row[DB_COL.distributeDate]);
+    if (!distDate) return;
+    const mediaCode = String(row[DB_COL.mediaCode] || '').trim();
+    const isIN = mediaCode === '';
+    const orderDateStr = datePart(row[DB_COL.orderDate]);
+    const dbInfoVal = String(row[DB_COL.dbInfo] || '').trim();
+    const isRecall = dbInfoVal.includes('재콜');
+    const eligible = (distDate === orderDateStr) && !isRecall;
+    const custKey = String(row[DB_COL.customerKey] || '').trim();
+
+    // 재콜은 DB수 집계에서만 제외 (계약 매칭용 keyMeta에는 저장)
+    if (!isRecall) {
+      if (!dateMap[distDate]) dateMap[distDate] = {};
+      if (!dateMap[distDate][name]) dateMap[distDate][name] = { total: 0, nonIN: 0, inOnly: 0 };
+      dateMap[distDate][name].total++;
+      if (isIN) dateMap[distDate][name].inOnly++;
+      else dateMap[distDate][name].nonIN++;
+    }
+
+    if (custKey) {
+      keyEntries.push([custKey, { d: distDate, in: isIN ? 1 : 0, el: eligible ? 1 : 0, p: name }]);
+    }
+  });
+
+  const dates = Object.keys(dateMap).sort();
+  if (dates.length === 0) {
+    showStatus('DB수 파일에서 분배일을 읽을 수 없습니다.', 'error');
+    return null;
+  }
+
+  try {
+    const db = await openDB();
+    const txRead = db.transaction(STORE_DATES, 'readonly');
+    const existingDates = {};
+    for (const date of dates) {
+      const existing = await new Promise(resolve => {
+        const req = txRead.objectStore(STORE_DATES).get(date);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      });
+      if (existing) existingDates[date] = existing;
+    }
+
+    const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+    const dateStore = tx.objectStore(STORE_DATES);
+    for (const date of dates) {
+      const newPersons = dateMap[date];
+      const prev = existingDates[date]?.persons || {};
+      for (const [name, counts] of Object.entries(newPersons)) {
+        if (prev[name]) {
+          prev[name].total += counts.total;
+          prev[name].nonIN += counts.nonIN;
+          prev[name].inOnly += counts.inOnly;
+        } else {
+          prev[name] = { ...counts };
+        }
+      }
+      dateStore.put({ isHoliday: isHoliday(date), persons: prev }, date);
+    }
+    const keyStore = tx.objectStore(STORE_KEYS);
+    for (const [k, v] of keyEntries) keyStore.put(v, k);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+  } catch (err) {
+    showStatus(`DB 저장 오류: ${err.message}`, 'error');
+  }
+
+  await refreshStorageDisplay();
+  // Return info needed to undo this file later
+  const addedKeys = keyEntries.map(([k]) => k);
+  return { latestDate: dates[dates.length - 1], addedKeys, dateContributions: dateMap };
+}
+
+async function refreshStorageDisplay() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_ROSTER, STORE_CONTRACT], 'readonly');
+    const keys = await new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_DATES).getAllKeys();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const rosterKeys = await new Promise((resolve) => {
+      const req = tx.objectStore(STORE_ROSTER).getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+    const contractKeys = await new Promise((resolve) => {
+      const req = tx.objectStore(STORE_CONTRACT).getAllKeys();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+    const hasContract = contractKeys.length > 0;
+    db.close();
+    const dates = keys.sort();
+    const el = document.getElementById('storageDates');
+    const parts = [];
+    parts.push(rosterKeys.length > 0 ? `명단 ${rosterKeys.sort().join(', ')}` : '명단 X');
+    if (dates.length > 0) {
+      parts.push(`DB ${dates.length}일 (${dates[0]}~${dates[dates.length-1]})`);
+    } else {
+      parts.push('DB X');
+    }
+    parts.push(hasContract ? '계약 O' : '계약 X');
+    el.textContent = parts.join(' | ');
+  } catch {
+    document.getElementById('storageDates').textContent = '(읽기 오류)';
+  }
+}
+
+async function clearStorage() {
+  if (!confirm('모든 저장 데이터(DB, 명단, 계약)를 삭제하시겠습니까?')) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT, STORE_FILEMETA], 'readwrite');
+    tx.objectStore(STORE_DATES).clear();
+    tx.objectStore(STORE_KEYS).clear();
+    tx.objectStore(STORE_ROSTER).clear();
+    tx.objectStore(STORE_CONTRACT).clear();
+    tx.objectStore(STORE_FILEMETA).clear();
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    rosterMap = null;
+    rosterByMonth = {};
+    contractData = null;
+    contractByMonth = {};
+    document.getElementById('rosterFileList').innerHTML = '';
+    document.getElementById('dbFileList').innerHTML = '';
+    document.getElementById('contractFileList').innerHTML = '';
+    document.getElementById('uploadRoster').classList.remove('loaded');
+    document.getElementById('uploadDb').classList.remove('loaded');
+    document.getElementById('uploadContract').classList.remove('loaded');
+    document.getElementById('rosterStatus').textContent = '';
+    document.getElementById('dbStatus').textContent = '';
+    document.getElementById('contractStatus').textContent = '';
+    await refreshStorageDisplay();
+    showStatus('모든 저장 데이터가 초기화되었습니다.', 'success');
+  } catch (err) {
+    showStatus(`초기화 오류: ${err.message}`, 'error');
+  }
+}
+
+async function clearRoster(e) {
+  e.stopPropagation();
+  if (!confirm('명단 데이터를 초기화하시겠습니까?')) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_ROSTER, STORE_FILEMETA], 'readwrite');
+    tx.objectStore(STORE_ROSTER).clear();
+    tx.objectStore(STORE_FILEMETA).delete('roster');
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    rosterMap = null;
+    rosterByMonth = {};
+    document.getElementById('rosterFileList').innerHTML = '';
+    document.getElementById('uploadRoster').classList.remove('loaded');
+    document.getElementById('rosterStatus').textContent = '';
+    await refreshStorageDisplay();
+    showStatus('명단 데이터가 초기화되었습니다.', 'success');
+  } catch (err) { showStatus(`초기화 오류: ${err.message}`, 'error'); }
+}
+
+async function clearDb(e) {
+  e.stopPropagation();
+  if (!confirm('DB수 누적 데이터를 초기화하시겠습니까?')) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_KEYS, STORE_FILEMETA], 'readwrite');
+    tx.objectStore(STORE_DATES).clear();
+    tx.objectStore(STORE_KEYS).clear();
+    tx.objectStore(STORE_FILEMETA).delete('db');
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    todayDbDate = null;
+    document.getElementById('dbFileList').innerHTML = '';
+    document.getElementById('uploadDb').classList.remove('loaded');
+    document.getElementById('dbStatus').textContent = '';
+    await refreshStorageDisplay();
+    showStatus('DB수 누적 데이터가 초기화되었습니다.', 'success');
+  } catch (err) { showStatus(`초기화 오류: ${err.message}`, 'error'); }
+}
+
+async function clearContract(e) {
+  e.stopPropagation();
+  if (!confirm('계약수 데이터를 초기화하시겠습니까?')) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_CONTRACT, STORE_FILEMETA], 'readwrite');
+    tx.objectStore(STORE_CONTRACT).clear();
+    tx.objectStore(STORE_FILEMETA).delete('contract');
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    contractData = null;
+    contractByMonth = {};
+    document.getElementById('contractFileList').innerHTML = '';
+    document.getElementById('uploadContract').classList.remove('loaded');
+    document.getElementById('contractStatus').textContent = '';
+    await refreshStorageDisplay();
+    showStatus('계약수 데이터가 초기화되었습니다.', 'success');
+  } catch (err) { showStatus(`초기화 오류: ${err.message}`, 'error'); }
+}
+
+async function saveRosterToDB(monthKey, rows) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ROSTER, 'readwrite');
+    tx.objectStore(STORE_ROSTER).put(rows, monthKey);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+  } catch (err) {
+    console.error('명단 저장 오류:', err);
+  }
+}
+
+async function saveContractToDB(monthKey, rows) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_CONTRACT, 'readwrite');
+    tx.objectStore(STORE_CONTRACT).put(rows, monthKey);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+  } catch (err) {
+    console.error('계약 저장 오류:', err);
+  }
+}
+
+async function saveFileMeta(type, fileName, rowCount, addedKeys, dateContributions) {
+  try {
+    const db = await openDB();
+    let files = [];
+    if (type === 'db' || type === 'roster' || type === 'contract') {
+      const txR = db.transaction(STORE_FILEMETA, 'readonly');
+      const existing = await new Promise(resolve => {
+        const req = txR.objectStore(STORE_FILEMETA).get(type);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+      files = existing;
+    }
+    const entry = { name: fileName, count: rowCount, date: fmtDateTime(new Date()) };
+    if (addedKeys) entry.addedKeys = addedKeys;
+    if (dateContributions) entry.dateContributions = dateContributions;
+    files.push(entry);
+    const tx = db.transaction(STORE_FILEMETA, 'readwrite');
+    tx.objectStore(STORE_FILEMETA).put(files, type);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    renderFileList(type, files);
+  } catch (err) {
+    console.error('파일 메타 저장 오류:', err);
+  }
+}
+
+async function saveFileArchive(fileName, arrayBuffer) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ARCHIVE, 'readwrite');
+    tx.objectStore(STORE_ARCHIVE).put({ data: arrayBuffer, date: fmtDateTime(new Date()) }, fileName);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+  } catch (err) {
+    console.error('파일 아카이브 저장 오류:', err);
+  }
+}
+
+async function toggleArchiveList() {
+  const el = document.getElementById('archiveList');
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ARCHIVE, 'readonly');
+    const store = tx.objectStore(STORE_ARCHIVE);
+    const items = [];
+    await new Promise((resolve, reject) => {
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) {
+          items.push({ name: cursor.key, date: cursor.value?.date || '' });
+          cursor.continue();
+        } else {
+          resolve();
+        }
+      };
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    if (items.length === 0) {
+      el.innerHTML = '<div style="color:#888;padding:4px 0;">저장된 파일이 없습니다.</div>';
+    } else {
+      el.innerHTML = items.map(f =>
+        `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #eee;">` +
+        `<span style="flex:1;word-break:break-all;">${f.name}</span>` +
+        `<span style="color:#888;white-space:nowrap;font-size:11px;">${f.date}</span>` +
+        `<button onclick="downloadArchiveFile('${f.name.replace(/'/g, "\\'")}')" style="padding:2px 8px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;font-size:11px;white-space:nowrap;">다운로드</button>` +
+        `</div>`
+      ).join('');
+    }
+    el.style.display = 'block';
+  } catch (err) {
+    console.error('아카이브 로드 오류:', err);
+    el.innerHTML = `<div style="color:#c62828;">아카이브 로드 오류: ${err.message}</div>`;
+    el.style.display = 'block';
+  }
+}
+
+async function downloadArchiveFile(fileName) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ARCHIVE, 'readonly');
+    const item = await new Promise((resolve, reject) => {
+      const req = tx.objectStore(STORE_ARCHIVE).get(fileName);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    if (!item || !item.data) { alert('파일 데이터를 찾을 수 없습니다.'); return; }
+    const blob = new Blob([item.data]);
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  } catch (err) {
+    alert('다운로드 오류: ' + err.message);
+  }
+}
+
+async function clearArchive() {
+  if (!confirm('아카이브된 파일을 모두 삭제하시겠습니까?')) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ARCHIVE, 'readwrite');
+    tx.objectStore(STORE_ARCHIVE).clear();
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    document.getElementById('archiveList').innerHTML = '<div style="color:#888;padding:4px 0;">저장된 파일이 없습니다.</div>';
+    showStatus('아카이브가 삭제되었습니다.', 'success');
+  } catch (err) {
+    showStatus('아카이브 삭제 오류: ' + err.message, 'error');
+  }
+}
+
+function renderFileList(type, files) {
+  const listId = { roster: 'rosterFileList', db: 'dbFileList', contract: 'contractFileList' }[type];
+  const el = document.getElementById(listId);
+  if (!el || !files || files.length === 0) { if (el) el.innerHTML = ''; return; }
+  el.innerHTML = files.map((f, i) => {
+    const delBtn = type === 'db' ? `<button class="btn-file-del" onclick="deleteDbFileEntry(${i})" title="이 파일 삭제">✕</button>` : '';
+    return `<div class="file-item"><span class="file-icon">✓</span><span class="file-name">${f.name}</span><span class="file-count">${Number(f.count).toLocaleString()}건</span>${delBtn}</div>`;
+  }).join('');
+}
+
+async function deleteDbFileEntry(index) {
+  try {
+    const db = await openDB();
+    const txR = db.transaction(STORE_FILEMETA, 'readonly');
+    const files = await new Promise(resolve => {
+      const req = txR.objectStore(STORE_FILEMETA).get('db');
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+    if (index < 0 || index >= files.length) return;
+    const entry = files[index];
+    if (!confirm(`"${entry.name}" 파일을 삭제하시겠습니까?`)) { db.close(); return; }
+
+    // Remove customer keys from keyMeta
+    const keysToRemove = entry.addedKeys || [];
+    // Subtract date contributions from dates store
+    const contributions = entry.dateContributions || {};
+
+    const stores = [STORE_KEYS, STORE_DATES, STORE_FILEMETA];
+    const tx = db.transaction(stores, 'readwrite');
+    const keyStore = tx.objectStore(STORE_KEYS);
+    for (const k of keysToRemove) keyStore.delete(k);
+
+    const dateStore = tx.objectStore(STORE_DATES);
+    for (const [date, persons] of Object.entries(contributions)) {
+      const existing = await new Promise(resolve => {
+        const req = dateStore.get(date);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      });
+      if (!existing) continue;
+      for (const [name, counts] of Object.entries(persons)) {
+        if (existing.persons[name]) {
+          existing.persons[name].total -= counts.total;
+          existing.persons[name].nonIN -= counts.nonIN;
+          existing.persons[name].inOnly -= counts.inOnly;
+          if (existing.persons[name].total <= 0) delete existing.persons[name];
+        }
+      }
+      if (Object.keys(existing.persons).length === 0) dateStore.delete(date);
+      else dateStore.put(existing, date);
+    }
+
+    files.splice(index, 1);
+    tx.objectStore(STORE_FILEMETA).put(files, 'db');
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+
+    renderFileList('db', files);
+    if (files.length === 0) {
+      document.getElementById('uploadDb').classList.remove('loaded');
+      document.getElementById('dbStatus').textContent = '';
+    }
+    await refreshStorageDisplay();
+    showStatus(`"${entry.name}" 삭제 완료`, 'success');
+  } catch (err) {
+    showStatus(`파일 삭제 오류: ${err.message}`, 'error');
+  }
+}
+
+async function loadSavedFiles() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_ROSTER, STORE_CONTRACT, STORE_FILEMETA], 'readonly');
+
+    // Load all roster months
+    const rosterEntries = await new Promise((resolve, reject) => {
+      const store = tx.objectStore(STORE_ROSTER);
+      const result = [];
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { result.push([cursor.key, cursor.value]); cursor.continue(); }
+        else resolve(result);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const contractEntries = await new Promise((resolve, reject) => {
+      const store = tx.objectStore(STORE_CONTRACT);
+      const result = [];
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { result.push([cursor.key, cursor.value]); cursor.continue(); }
+        else resolve(result);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const fileMeta = {};
+    for (const type of ['roster', 'db', 'contract']) {
+      fileMeta[type] = await new Promise(resolve => {
+        const req = tx.objectStore(STORE_FILEMETA).get(type);
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+    }
+
+    db.close();
+
+    for (const type of ['roster', 'db', 'contract']) {
+      renderFileList(type, fileMeta[type]);
+    }
+
+    if (rosterEntries.length > 0) {
+      rosterByMonth = {};
+      for (const [monthKey, rows] of rosterEntries) {
+        rosterByMonth[monthKey] = parseRosterRows(rows);
+      }
+      // Use latest month as active roster
+      const latestMonth = Object.keys(rosterByMonth).sort().pop();
+      rosterMap = rosterByMonth[latestMonth];
+      document.getElementById('uploadRoster').classList.add('loaded');
+      const totalNames = Object.values(rosterByMonth).reduce((s, m) => Math.max(s, m.size), 0);
+      document.getElementById('rosterStatus').textContent = `${totalNames}명 (저장됨, ${Object.keys(rosterByMonth).length}개월)`;
+    }
+    if (contractEntries.length > 0) {
+      contractByMonth = {};
+      for (const [monthKey, rows] of contractEntries) {
+        contractByMonth[monthKey] = rows;
+      }
+      const latestMonth = Object.keys(contractByMonth).sort().pop();
+      contractData = contractByMonth[latestMonth];
+      document.getElementById('uploadContract').classList.add('loaded');
+      document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (저장됨, ${Object.keys(contractByMonth).length}개월)`;
+    }
+
+    if (rosterMap && contractData) {
+      await tryBuildTab4();
+    }
+  } catch (err) {
+    console.error('저장 데이터 복원 오류:', err);
+  }
+}
+
+// ══════════════════════════════════════════════
+// ── Roster Parsing ──
+// ══════════════════════════════════════════════
+function parseRosterRows(rows) {
+  const map = new Map();
+  rows.forEach(row => {
+    const name = String(row[ROSTER_COL.name] || '').trim();
+    if (!name) return;
+    // R 포함 필터: 이름에 R이 없으면 제외
+    if (!name.includes('R')) return;
+    // 특정 인원 제외
+    if (ROSTER_EXCLUDE.has(name)) return;
+
+    const role = String(row[ROSTER_COL.role] || '').trim();
+    const groupRaw = String(row[ROSTER_COL.group] || '').trim();
+    const center = String(row[ROSTER_COL.center] || '').trim();
+    const team = String(row[ROSTER_COL.team] || '').trim();
+    const hireDate = fmtDateShort(row[ROSTER_COL.hireDate]);
+
+    let group = '';
+    if (role === '제2외국어' || role === '톡이즈') {
+      group = role;
+    } else if (role === '뇌새김영어') {
+      if (groupRaw === 'A그룹') group = 'N그룹';
+      else group = groupRaw;
+    } else {
+      group = groupRaw || role || '미분류';
+    }
+
+    map.set(name, { group, center, team, hireDate, role });
+  });
+  return map;
+}
+
+function parseRoster(rows) {
+  rosterMap = parseRosterRows(rows);
+}
+
+// ══════════════════════════════════════════════
+// ── Status Messages ──
+// ══════════════════════════════════════════════
+function showStatus(msg, type) {
+  const bar = document.getElementById('statusBar');
+  const div = document.createElement('div');
+  div.className = `msg msg-${type}`;
+  div.textContent = msg;
+  bar.appendChild(div);
+  setTimeout(() => div.remove(), 5000);
+}
+
+// ══════════════════════════════════════════════
+// ── Last Update Display ──
+// ══════════════════════════════════════════════
+function updateLastUpdateTime() {
+  const el = document.getElementById('lastUpdate');
+  const saved = localStorage.getItem('dbPerf_lastUpdate');
+  if (saved) {
+    el.textContent = `최종 업데이트: ${saved}`;
+  }
+}
+function saveLastUpdateTime() {
+  const now = fmtDateTime(new Date());
+  localStorage.setItem('dbPerf_lastUpdate', now);
+  document.getElementById('lastUpdate').textContent = `최종 업데이트: ${now}`;
+}
+
+// ══════════════════════════════════════════════
+// ── File Upload Handlers ──
+// ══════════════════════════════════════════════
+document.getElementById('fileRoster').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const monthKey = extractMonthKey(file.name);
+  readExcel(file, async data => {
+    const parsed = parseRosterRows(data);
+    rosterByMonth[monthKey] = parsed;
+    await saveRosterToDB(monthKey, data);
+    await saveFileMeta('roster', `${file.name} (${monthKey})`, parsed.size);
+    const latestMonth = Object.keys(rosterByMonth).sort().pop();
+    rosterMap = rosterByMonth[latestMonth];
+    document.getElementById('uploadRoster').classList.add('loaded');
+    document.getElementById('rosterStatus').textContent = `${parsed.size}명 (${monthKey})`;
+    showStatus(`명단 로드: ${parsed.size}명 → ${monthKey} (자동 저장됨)`, 'success');
+    populateFilters();
+    fileJustUploaded = true;
+    await tryBuildTab4();
+  }, 'progressRoster');
+});
+
+document.getElementById('fileDb').addEventListener('change', e => {
+  const files = e.target.files;
+  if (!files || files.length === 0) return;
+  let processed = 0;
+  const total = files.length;
+  setProgress('progressDb', 0, false);
+  for (const file of files) {
+    readExcel(file, async (data, arrayBuffer) => {
+      document.getElementById('uploadDb').classList.add('loaded');
+      const result = await accumulateDbData(data);
+      if (result) {
+        todayDbDate = result.latestDate;
+        await saveFileMeta('db', file.name, data.length, result.addedKeys, result.dateContributions);
+      }
+      await saveFileArchive(file.name, arrayBuffer);
+      processed++;
+      document.getElementById('dbStatus').textContent = `${processed}/${total}개 파일 로드 완료`;
+      setProgress('progressDb', Math.round(processed / total * 100), processed === total);
+      if (todayDbDate) {
+        showStatus(`DB수 로드: ${file.name} (${data.length.toLocaleString()}건)`, 'success');
+      }
+      if (processed === total) {
+        fileJustUploaded = true;
+        await tryBuildTab4();
+      }
+    }, total === 1 ? 'progressDb' : null);
+  }
+});
+
+document.getElementById('fileContract').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const monthKey = extractMonthKey(file.name);
+  readExcel(file, async data => {
+    contractByMonth[monthKey] = data;
+    await saveContractToDB(monthKey, data);
+    await saveFileMeta('contract', `${file.name} (${monthKey})`, data.length);
+    const latestMonth = Object.keys(contractByMonth).sort().pop();
+    contractData = contractByMonth[latestMonth];
+    document.getElementById('uploadContract').classList.add('loaded');
+    document.getElementById('contractStatus').textContent = `${data.length.toLocaleString()}건 (${monthKey})`;
+    showStatus(`계약수 로드: ${data.length.toLocaleString()}건 → ${monthKey} (자동 저장됨)`, 'success');
+    fileJustUploaded = true;
+    await tryBuildTab4();
+  }, 'progressContract');
+});
+
+// ══════════════════════════════════════════════
+// ── Filter Functions ──
+// ══════════════════════════════════════════════
+function getFilterDates() {
+  const start = document.getElementById('dateStart').value;
+  const end = document.getElementById('dateEnd').value;
+  return { start: start || null, end: end || null };
+}
+
+function setQuickDate(type, btn) {
+  const today = new Date();
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  let start, end;
+
+  switch (type) {
+    case 'today':
+      start = end = fmt(today);
+      break;
+    case 'lastBizDay': {
+      if (globalLatestDate) {
+        start = end = globalLatestDate;
+      } else {
+        const y = new Date(today); y.setDate(y.getDate() - 1);
+        start = end = fmt(y);
+      }
+      break;
+    }
+    case 'thisMonth':
+      start = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`;
+      end = fmt(today);
+      break;
+    case '1m': case '3m': case '6m': case '12m': {
+      const months = parseInt(type);
+      const s = new Date(today); s.setMonth(s.getMonth() - months);
+      start = fmt(s); end = fmt(today);
+      break;
+    }
+    case 'all':
+      start = ''; end = '';
+      break;
+  }
+
+  document.getElementById('dateStart').value = start;
+  document.getElementById('dateEnd').value = end;
+  updateDateRangeText();
+
+  document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('calendarPopup').classList.remove('open');
+
+  tryBuildTab4();
+}
+
+function initDefaultDates() {
+  const today = new Date();
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  document.getElementById('dateStart').value = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`;
+  document.getElementById('dateEnd').value = fmt(today);
+  updateDateRangeText();
+}
+
+// ── Custom Calendar ──
+let calViewYear, calViewMonth;
+let calSelectPhase = 'start';
+
+function toggleCalendar() {
+  const popup = document.getElementById('calendarPopup');
+  if (popup.classList.contains('open')) {
+    popup.classList.remove('open');
+    return;
+  }
+  const startVal = document.getElementById('dateStart').value;
+  if (startVal) {
+    const d = new Date(startVal);
+    calViewYear = d.getFullYear();
+    calViewMonth = d.getMonth();
+  } else {
+    const now = new Date();
+    calViewYear = now.getFullYear();
+    calViewMonth = now.getMonth();
+  }
+  calSelectPhase = 'start';
+  renderCalendar();
+  popup.classList.add('open');
+}
+
+function calNavMonth(delta) {
+  calViewMonth += delta;
+  if (calViewMonth < 0) { calViewMonth = 11; calViewYear--; }
+  if (calViewMonth > 11) { calViewMonth = 0; calViewYear++; }
+  renderCalendar();
+}
+
+function renderCalendar() {
+  document.getElementById('calTitle').textContent = `${calViewYear}년 ${calViewMonth + 1}월`;
+  const grid = document.getElementById('calendarGrid');
+  const startVal = document.getElementById('dateStart').value;
+  const endVal = document.getElementById('dateEnd').value;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+
+  let html = '';
+  ['일','월','화','수','목','금','토'].forEach(d => { html += `<div class="day-header">${d}</div>`; });
+
+  function dayHtml(d, ds, isOther) {
+    let cls = 'day-cell';
+    if (isOther) cls += ' other-month';
+    if (ds === todayStr) cls += ' today';
+    if (ds === startVal) cls += ' selected-start';
+    if (ds === endVal) cls += ' selected-end';
+    if (startVal && endVal && ds > startVal && ds < endVal) cls += ' in-range';
+    return `<div class="${cls}" data-date="${ds}" onclick="calSelectDate('${ds}')">${d}</div>`;
+  }
+
+  const firstDay = new Date(calViewYear, calViewMonth, 1).getDay();
+  const daysInMonth = new Date(calViewYear, calViewMonth + 1, 0).getDate();
+  const prevDays = new Date(calViewYear, calViewMonth, 0).getDate();
+
+  for (let i = firstDay - 1; i >= 0; i--) {
+    const d = prevDays - i;
+    const m = calViewMonth === 0 ? 12 : calViewMonth;
+    const y = calViewMonth === 0 ? calViewYear - 1 : calViewYear;
+    html += dayHtml(d, `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`, true);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    html += dayHtml(d, `${calViewYear}-${String(calViewMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`, false);
+  }
+  const totalCells = firstDay + daysInMonth;
+  const remaining = totalCells % 7 === 0 ? 0 : 7 - (totalCells % 7);
+  for (let d = 1; d <= remaining; d++) {
+    const m = calViewMonth === 11 ? 1 : calViewMonth + 2;
+    const y = calViewMonth === 11 ? calViewYear + 1 : calViewYear;
+    html += dayHtml(d, `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`, true);
+  }
+
+  grid.innerHTML = html;
+
+  const hint = document.getElementById('calHint');
+  if (calSelectPhase === 'start') {
+    hint.textContent = '시작일을 선택하세요';
+  } else {
+    hint.textContent = `시작일: ${startVal}  →  종료일을 선택하세요`;
+  }
+}
+
+// 호버 프리뷰: innerHTML 교체 없이 CSS 클래스만 변경 (클릭 이벤트 보호)
+document.getElementById('calendarGrid').addEventListener('mouseover', (e) => {
+  if (calSelectPhase !== 'end') return;
+  const cell = e.target.closest('.day-cell');
+  if (!cell || !cell.dataset.date) return;
+  const hoverDate = cell.dataset.date;
+  const startVal = document.getElementById('dateStart').value;
+  if (!startVal) return;
+  const rStart = hoverDate < startVal ? hoverDate : startVal;
+  const rEnd = hoverDate < startVal ? startVal : hoverDate;
+  document.querySelectorAll('#calendarGrid .day-cell').forEach(c => {
+    const d = c.dataset.date;
+    c.classList.remove('in-range', 'selected-end');
+    if (d && d > rStart && d < rEnd) c.classList.add('in-range');
+    if (d === hoverDate) c.classList.add('selected-end');
+  });
+});
+document.getElementById('calendarGrid').addEventListener('mouseleave', () => {
+  if (calSelectPhase !== 'end') return;
+  document.querySelectorAll('#calendarGrid .day-cell').forEach(c => {
+    c.classList.remove('in-range', 'selected-end');
+  });
+});
+
+function calSelectDate(dateStr) {
+  if (calSelectPhase === 'start') {
+    document.getElementById('dateStart').value = dateStr;
+    document.getElementById('dateEnd').value = '';
+    calSelectPhase = 'end';
+    renderCalendar();
+  } else {
+    const startVal = document.getElementById('dateStart').value;
+    if (dateStr < startVal) {
+      document.getElementById('dateStart').value = dateStr;
+      document.getElementById('dateEnd').value = startVal;
+    } else {
+      document.getElementById('dateEnd').value = dateStr;
+    }
+    calSelectPhase = 'start';
+    document.getElementById('calendarPopup').classList.remove('open');
+    updateDateRangeText();
+    document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+    tryBuildTab4();
+  }
+}
+
+function updateDateRangeText() {
+  const start = document.getElementById('dateStart').value;
+  const end = document.getElementById('dateEnd').value;
+  const el = document.getElementById('dateRangeText');
+  if (!start && !end) el.textContent = '전체 기간';
+  else if (start === end) el.textContent = start;
+  else el.textContent = `${start} ~ ${end}`;
+}
+
+document.addEventListener('mousedown', (e) => {
+  const popup = document.getElementById('calendarPopup');
+  if (popup.classList.contains('open') && !e.target.closest('.date-range-picker')) {
+    popup.classList.remove('open');
+  }
+});
+
+function toggleFilterPanel(btn) {
+  const panel = btn.closest('.filter-dropdown').querySelector('.filter-panel');
+  document.querySelectorAll('.filter-panel.open').forEach(p => {
+    if (p !== panel) p.classList.remove('open');
+  });
+  panel.classList.toggle('open');
+}
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.filter-dropdown')) {
+    document.querySelectorAll('.filter-panel.open').forEach(p => p.classList.remove('open'));
+  }
+});
+
+function populateFilters() {
+  if (!rosterMap) return;
+
+  const groups = new Set(), centers = new Set(), teams = new Set(), persons = new Set();
+  // Collect from ALL months' rosters
+  for (const monthRoster of Object.values(rosterByMonth)) {
+    monthRoster.forEach((info, name) => {
+      if (info.group) groups.add(info.group);
+      if (info.center) centers.add(info.center);
+      if (info.team) teams.add(info.team);
+      persons.add(name);
+    });
+  }
+  // Fallback: current rosterMap
+  if (groups.size === 0) {
+    rosterMap.forEach((info, name) => {
+      if (info.group) groups.add(info.group);
+      if (info.center) centers.add(info.center);
+      if (info.team) teams.add(info.team);
+      persons.add(name);
+    });
+  }
+
+  const buildPanel = (panelId, items, presorted) => {
+    const panel = document.getElementById(panelId);
+    const sorted = presorted ? [...items] : [...items].sort();
+    let html = `<label class="select-all"><input type="checkbox" checked onchange="toggleSelectAll(this, '${panelId}')"> 전체선택</label>`;
+    sorted.forEach(item => {
+      html += `<label><input type="checkbox" checked value="${item}" onchange="onFilterChange('${panelId}')"> ${item}</label>`;
+    });
+    panel.innerHTML = html;
+  };
+
+  const groupOrder = ['W그룹', 'E그룹', 'N그룹', '제2외국어', '톡이즈'];
+  const sortedGroups = [...groups].sort((a, b) => {
+    const ia = groupOrder.indexOf(a), ib = groupOrder.indexOf(b);
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+  });
+  buildPanel('filterPanelGroup', sortedGroups, true);
+  buildPanel('filterPanelCenter', centers);
+  const sortedTeams = [...teams].sort((a, b) => {
+    const na = parseInt(a.replace(/[^0-9]/g, '')) || 999;
+    const nb = parseInt(b.replace(/[^0-9]/g, '')) || 999;
+    return na - nb;
+  });
+  buildPanel('filterPanelTeam', sortedTeams, true);
+  // 개인 필터: 검색 기능 포함
+  const personPanel = document.getElementById('filterPanelPerson');
+  const sortedPersons = [...persons].sort();
+  let pHtml = `<div class="filter-search"><input type="text" placeholder="이름 검색..." oninput="filterPersonSearch(this.value)"></div>`;
+  pHtml += `<label class="select-all"><input type="checkbox" checked onchange="toggleSelectAll(this, 'filterPanelPerson')"> 전체선택</label>`;
+  sortedPersons.forEach(item => {
+    pHtml += `<label data-name="${item}"><input type="checkbox" checked value="${item}" onchange="onFilterChange('filterPanelPerson')"> ${item}</label>`;
+  });
+  personPanel.innerHTML = pHtml;
+}
+
+function filterPersonSearch(query) {
+  const panel = document.getElementById('filterPanelPerson');
+  const labels = panel.querySelectorAll('label[data-name]');
+  const q = query.trim().toLowerCase();
+  labels.forEach(label => {
+    const name = label.getAttribute('data-name').toLowerCase();
+    label.style.display = (!q || name.includes(q)) ? '' : 'none';
+  });
+}
+
+function toggleSelectAll(checkbox, panelId) {
+  const panel = document.getElementById(panelId);
+  const checked = checkbox.checked;
+  panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    if (cb !== checkbox) cb.checked = checked;
+  });
+  onFilterChange(panelId);
+}
+
+function onFilterChange(panelId) {
+  const panel = document.getElementById(panelId);
+  const labels = panel.querySelectorAll('label:not(.select-all)');
+  const total = labels.length;
+  const checked = [...labels].filter(l => l.querySelector('input').checked).length;
+
+  const dropdown = panel.closest('.filter-dropdown');
+  const badge = dropdown.querySelector('.count-badge');
+  badge.textContent = checked === total ? '전체' : `${checked}/${total}`;
+
+  const selectAllCb = panel.querySelector('.select-all input');
+  selectAllCb.checked = checked === total;
+
+  tryBuildTab4();
+}
+
+function getSelectedFilters() {
+  const getChecked = (panelId) => {
+    const panel = document.getElementById(panelId);
+    const labels = panel.querySelectorAll('label:not(.select-all)');
+    const total = labels.length;
+    const selected = [...labels].filter(l => l.querySelector('input').checked).map(l => l.querySelector('input').value);
+    return selected.length === total ? null : new Set(selected);
+  };
+  return {
+    groups: getChecked('filterPanelGroup'),
+    centers: getChecked('filterPanelCenter'),
+    teams: getChecked('filterPanelTeam'),
+    persons: getChecked('filterPanelPerson'),
+  };
+}
+
+// ══════════════════════════════════════════════
+// ── Roster selection by date ──
+// ══════════════════════════════════════════════
+function getRosterForDate(dateStr) {
+  // dateStr: 'YYYY-MM-DD' → pick roster for that month
+  // Returns the roster Map for the matching month, or nearest available
+  if (!dateStr) return rosterMap;
+  const targetMonth = dateStr.slice(0, 7); // 'YYYY-MM'
+  const months = Object.keys(rosterByMonth).sort();
+  if (months.length === 0) return rosterMap;
+
+  // Exact match
+  if (rosterByMonth[targetMonth]) return rosterByMonth[targetMonth];
+
+  // Find closest month <= target
+  let best = null;
+  for (const m of months) {
+    if (m <= targetMonth) best = m;
+  }
+  return best ? rosterByMonth[best] : rosterByMonth[months[months.length - 1]];
+}
+
+// ══════════════════════════════════════════════
+// ── Tab 4: Daily Performance ──
+// ══════════════════════════════════════════════
+async function tryBuildTab4() {
+  if (!rosterMap || !contractData) return;
+
+  const acc = await loadAccumulated();
+  const allDates = Object.keys(acc.dates).sort();
+  globalLatestDate = allDates.length > 0 ? allDates[allDates.length - 1] : null;
+
+  if (allDates.length === 0) {
+    document.getElementById('dashboardArea').classList.add('hidden');
+    document.getElementById('emptyState').classList.remove('hidden');
+    document.getElementById('filterSection').classList.add('hidden');
+    return;
+  }
+
+  document.getElementById('filterSection').classList.remove('hidden');
+  if (document.getElementById('filterPanelGroup').children.length === 0) {
+    populateFilters();
+    initDefaultDates();
+  }
+
+  const { start: dateStart, end: dateEnd } = getFilterDates();
+  const accDates = allDates.filter(d => {
+    if (dateStart && d < dateStart) return false;
+    if (dateEnd && d > dateEnd) return false;
+    return true;
+  });
+
+  // 조회 종료월 기준 명단 선택
+  const queryEndDate = dateEnd || (accDates.length > 0 ? accDates[accDates.length-1] : null);
+  const activeRoster = getRosterForDate(queryEndDate);
+
+  // 전월 명단 (그룹 변동 비교용)
+  let prevMonthRoster = null;
+  if (queryEndDate) {
+    const months = Object.keys(rosterByMonth).sort();
+    const curMonth = queryEndDate.slice(0, 7);
+    const prevMonths = months.filter(m => m < curMonth);
+    if (prevMonths.length > 0) {
+      prevMonthRoster = rosterByMonth[prevMonths[prevMonths.length - 1]];
+    }
+  }
+
+  const filters = getSelectedFilters();
+  const isPersonVisible = (name) => {
+    if (filters.persons && !filters.persons.has(name)) return false;
+    const info = activeRoster.get(name);
+    if (!info) return false;
+    if (filters.groups && !filters.groups.has(info.group)) return false;
+    if (filters.centers && !filters.centers.has(info.center)) return false;
+    if (filters.teams && !filters.teams.has(info.team)) return false;
+    return true;
+  };
+
+  if (fileJustUploaded) {
+    saveLastUpdateTime();
+    fileJustUploaded = false;
+  }
+
+  const contractByKey = new Map();
+  contractData.forEach(row => {
+    const key = String(row[CT_COL.customerKey] || '').trim();
+    if (key) contractByKey.set(key, row);
+  });
+
+  const personStats = new Map();
+
+  function getStats(name) {
+    if (!personStats.has(name)) {
+      personStats.set(name, {
+        todayDb: 0, todayDbNonIN: 0, todayDailyContract: 0, todayActualContract: 0, todayContractNonIN: 0,
+        cumDbNonIN: 0, cumCancelNonIN: 0, cumContractNonIN: 0,
+        cumDbIN: 0, cumCancelIN: 0, cumContractIN: 0,
+        cumContractAll: 0, cumDbAll: 0,
+        holDb: 0, holDailyContract: 0, holActualContract: 0, todayHolContract: 0,
+      });
+    }
+    return personStats.get(name);
+  }
+
+  const filteredDateSet = new Set(accDates);
+  const latestDate = accDates.length > 0 ? accDates[accDates.length - 1] : null;
+  for (const [date, dayData] of Object.entries(acc.dates)) {
+    if (!filteredDateSet.has(date)) continue;
+    const isLatest = (date === latestDate);
+    const isHol = dayData.isHoliday;
+
+    for (const [name, counts] of Object.entries(dayData.persons)) {
+      const s = getStats(name);
+      s.cumDbNonIN += counts.nonIN;
+      s.cumDbIN += counts.inOnly;
+      s.cumDbAll += counts.total;
+      if (isHol) s.holDb += counts.total;
+      if (isLatest) { s.todayDb = counts.total; s.todayDbNonIN = counts.nonIN; }
+    }
+  }
+
+  lastBuildDebug = {};
+  contractData.forEach(ctRow => {
+    const manager = String(ctRow[CT_COL.manager] || '').trim();
+    if (!manager) return;
+    const custKey = String(ctRow[CT_COL.customerKey] || '').trim();
+    const returnDateVal = ctRow[CT_COL.returnDate];
+    const isCancelled = returnDateVal != null && returnDateVal !== '' && String(returnDateVal).trim() !== '';
+
+    const appDateStr = datePart(ctRow[CT_COL.applicationDate]);
+
+    const meta = acc.keyMeta[custKey];
+    const categoryVal = String(ctRow[CT_COL.category] || '').trim();
+    const isIN = categoryVal === '';
+    let is일계약 = false;
+
+    if (meta) {
+      is일계약 = meta.el === 1 && (appDateStr === meta.d);
+    } else {
+      const dbDateStr = datePart(ctRow[CT_COL.dbDate]);
+      is일계약 = (dbDateStr && appDateStr && dbDateStr === appDateStr);
+    }
+
+    if (appDateStr) {
+      if (dateStart && appDateStr < dateStart) return;
+      if (dateEnd && appDateStr > dateEnd) return;
+    }
+
+    // 휴일근무: 분배일 기준 + 조회 기간 해당 월에 분배된 것만
+    let isHolContract = false;
+    let distDateForHol = '';
+    if (meta) {
+      distDateForHol = meta.d;
+      const distMonth = distDateForHol ? distDateForHol.slice(0, 7) : '';
+      const queryMonth = (dateEnd || appDateStr || '').slice(0, 7);
+      isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
+    } else {
+      distDateForHol = datePart(ctRow[CT_COL.distributeDate]) || datePart(ctRow[CT_COL.dbDate]);
+      const distMonth = distDateForHol ? distDateForHol.slice(0, 7) : '';
+      const queryMonth = (dateEnd || appDateStr || '').slice(0, 7);
+      isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
+    }
+
+    const s = getStats(manager);
+
+    if (!isCancelled) {
+      if (isIN) s.cumContractIN++;
+      else s.cumContractNonIN++;
+      s.cumContractAll++;
+
+      if (isHolContract) {
+        if (is일계약) s.holDailyContract++;  // 일계약수: IN 포함
+        if (!isIN) s.holActualContract++;     // 실계약수: IN 제외
+        // 디버그 기록
+        if (!lastBuildDebug[manager]) lastBuildDebug[manager] = { holDetails: [] };
+        lastBuildDebug[manager].holDetails.push({ custKey, distDate: distDateForHol, appDate: appDateStr, type: is일계약 ? '일계약' : '이전계약', cancelled: false, isIN });
+      }
+      if (appDateStr === latestDate) {
+        s.todayActualContract++;
+        if (!isIN) s.todayContractNonIN++;
+        if (is일계약) s.todayDailyContract++;
+        if (isHolContract && !isIN) s.todayHolContract++;
+      }
+    } else {
+      if (isIN) s.cumCancelIN++;
+      else s.cumCancelNonIN++;
+      // 취소 건도 휴일이면 디버그에 기록
+      if (isHolContract) {
+        if (!lastBuildDebug[manager]) lastBuildDebug[manager] = { holDetails: [] };
+        lastBuildDebug[manager].holDetails.push({ custKey, distDate: distDateForHol, appDate: appDateStr, type: is일계약 ? '일계약' : '이전계약', cancelled: true, isIN });
+      }
+    }
+  });
+
+  // 휴일근무 디버그 로그
+  console.log('=== 휴일근무 디버그 ===');
+  for (const [name, debug] of Object.entries(lastBuildDebug)) {
+    if (debug.holDetails && debug.holDetails.length > 0) {
+      console.log(`${name}: 휴일계약 ${debug.holDetails.length}건`, debug.holDetails);
+    }
+  }
+
+  // ── Group by activeRoster ──
+  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
+  const talkisGroups = ['톡이즈'];
+  const groupedMain = new Map();
+  const groupedTalkis = new Map();
+  mainGroups.forEach(g => groupedMain.set(g, []));
+  talkisGroups.forEach(g => groupedTalkis.set(g, []));
+
+  activeRoster.forEach((info, name) => {
+    if (!isPersonVisible(name)) return;
+    const stats = personStats.get(name) || getStats(name);
+    const g = info.group;
+    const prevInfo = prevMonthRoster ? prevMonthRoster.get(name) : null;
+    const prevGroup = prevInfo ? prevInfo.group : null;
+    if (talkisGroups.includes(g)) {
+      if (!groupedTalkis.has(g)) groupedTalkis.set(g, []);
+      groupedTalkis.get(g).push({ name, ...info, ...stats, prevGroup });
+    } else {
+      if (!groupedMain.has(g)) groupedMain.set(g, []);
+      groupedMain.get(g).push({ name, ...info, ...stats, prevGroup });
+    }
+  });
+
+  // ── KPI 1행: 조회 기간 기준 (필터 적용) ──
+  function calcFilteredKpi(gMap) {
+    let db = 0, actual = 0;
+    for (const [, persons] of gMap) {
+      for (const p of persons) { db += p.cumDbAll; actual += p.cumContractAll; }
+    }
+    return { db, actual };
+  }
+  let filtDailyMain = 0, filtDailyTalkis = 0;
+  for (const [key, meta] of Object.entries(acc.keyMeta)) {
+    if (meta.el !== 1) continue;
+    if (!isPersonVisible(meta.p)) continue;
+    const ctRow = contractByKey.get(key);
+    if (!ctRow) continue;
+    const appDate = datePart(ctRow[CT_COL.applicationDate]);
+    if (appDate) {
+      if (dateStart && appDate < dateStart) continue;
+      if (dateEnd && appDate > dateEnd) continue;
+    }
+    const rv = ctRow[CT_COL.returnDate];
+    if (rv != null && rv !== '' && String(rv).trim() !== '') continue;
+    const pi = activeRoster.get(meta.p);
+    if (pi && talkisGroups.includes(pi.group)) filtDailyTalkis++;
+    else filtDailyMain++;
+  }
+  const filtMain = calcFilteredKpi(groupedMain); filtMain.daily = filtDailyMain;
+  const filtTalkis = calcFilteredKpi(groupedTalkis); filtTalkis.daily = filtDailyTalkis;
+
+  // ── KPI 2행: 전영업일 데이터 (날짜 필터 무관) ──
+  const kpiPersonDb = new Map();
+  const globalDayData = globalLatestDate ? acc.dates[globalLatestDate] : null;
+  if (globalDayData) {
+    for (const [name, counts] of Object.entries(globalDayData.persons)) {
+      kpiPersonDb.set(name, counts.total);
+    }
+  }
+  const kpiPersonContract = new Map();
+  contractData.forEach(ctRow => {
+    const manager = String(ctRow[CT_COL.manager] || '').trim();
+    if (!manager) return;
+    const appDateStr = datePart(ctRow[CT_COL.applicationDate]);
+    if (appDateStr !== globalLatestDate) return;
+    const returnDateVal = ctRow[CT_COL.returnDate];
+    const isCancelled = returnDateVal != null && returnDateVal !== '' && String(returnDateVal).trim() !== '';
+    if (isCancelled) return;
+    if (!kpiPersonContract.has(manager)) kpiPersonContract.set(manager, { daily: 0, actual: 0 });
+    const kc = kpiPersonContract.get(manager);
+    kc.actual++;
+    const custKey = String(ctRow[CT_COL.customerKey] || '').trim();
+    const meta = custKey ? acc.keyMeta[custKey] : null;
+    let is일계약 = false;
+    if (meta) {
+      is일계약 = meta.el === 1 && (appDateStr === meta.d);
+    } else {
+      const dbDateStr = datePart(ctRow[CT_COL.dbDate]);
+      is일계약 = (dbDateStr && appDateStr && dbDateStr === appDateStr);
+    }
+    if (is일계약) kc.daily++;
+  });
+  function calcGlobalKpi(gMap) {
+    let db = 0, daily = 0, actual = 0;
+    for (const [, persons] of gMap) {
+      for (const p of persons) {
+        db += kpiPersonDb.get(p.name) || 0;
+        const kc = kpiPersonContract.get(p.name) || { daily: 0, actual: 0 };
+        daily += kc.daily; actual += kc.actual;
+      }
+    }
+    return { db, daily, actual };
+  }
+  kpiByTab.main = { filtered: filtMain, global: calcGlobalKpi(groupedMain) };
+  kpiByTab.talkis = { filtered: filtTalkis, global: calcGlobalKpi(groupedTalkis) };
+  displayKpi(currentTab);
+
+  // ── Render helper ──
+  const groupColors = {
+    'W그룹': 'w-group', 'E그룹': 'e-group', 'N그룹': 'n-group',
+    '제2외국어': 'lang-group', '톡이즈': 'talkis-group'
+  };
+
+  function renderGroups(groupedPersons) {
+    let html = '';
+
+    for (const [groupName, persons] of groupedPersons) {
+      if (persons.length === 0) continue;
+
+      // 현재 순위: DB<100 최하단, 실계약률 desc → 실계약수 desc
+      const latestIsHol = latestDate ? isHoliday(latestDate) : false;
+      function pureValues(p) {
+        const db = Math.max(0, p.cumDbNonIN - p.holDb);
+        const ct = Math.max(0, p.cumContractNonIN - p.holActualContract);
+        return { db, ct, rate: db > 0 ? ct / db : 0 };
+      }
+      persons.sort((a, b) => {
+        const pa = pureValues(a), pb = pureValues(b);
+        const bottomA = pa.db < 100 ? 1 : 0;
+        const bottomB = pb.db < 100 ? 1 : 0;
+        if (bottomA !== bottomB) return bottomA - bottomB;
+        if (pa.rate !== pb.rate) return pb.rate - pa.rate;
+        return pb.ct - pa.ct;
+      });
+
+      // 전일 대비 순위 계산: 당일 데이터 제외한 순위
+      const prevRank = {};
+      function prevPureValues(p) {
+        const prevDbNonIN = p.cumDbNonIN - p.todayDbNonIN;
+        const prevHolDb = p.holDb - (latestIsHol ? p.todayDb : 0);
+        const db = Math.max(0, prevDbNonIN - Math.max(0, prevHolDb));
+        const prevCtNonIN = p.cumContractNonIN - p.todayContractNonIN;
+        const prevHolCt = p.holActualContract - p.todayHolContract;
+        const ct = Math.max(0, prevCtNonIN - Math.max(0, prevHolCt));
+        return { db, ct, rate: db > 0 ? ct / db : 0 };
+      }
+      const prevSorted = [...persons].sort((a, b) => {
+        const pa = prevPureValues(a), pb = prevPureValues(b);
+        const bottomA = pa.db < 100 ? 1 : 0;
+        const bottomB = pb.db < 100 ? 1 : 0;
+        if (bottomA !== bottomB) return bottomA - bottomB;
+        if (pa.rate !== pb.rate) return pb.rate - pa.rate;
+        return pb.ct - pa.ct;
+      });
+      prevSorted.forEach((p, i) => { prevRank[p.name] = i + 1; });
+
+      function rankChangeHtml(currentRank, name) {
+        const prev = prevRank[name];
+        if (!prev) return '<span class="rank-change rank-same">-</span>';
+        const diff = prev - currentRank; // positive = moved up
+        if (diff > 0) return `<span class="rank-change rank-up">▲${diff}</span>`;
+        if (diff < 0) return `<span class="rank-change rank-down">▼${Math.abs(diff)}</span>`;
+        return '<span class="rank-change rank-same">-</span>';
+      }
+
+      const colorClass = groupColors[groupName] || 'w-group';
+
+      html += `<div class="group-section">`;
+      html += `<div class="group-header ${colorClass}">${groupName}<span class="group-count">${persons.length}명</span></div>`;
+      html += `<div class="perf-table-wrap">`;
+      html += `<table class="perf-table"><thead>`;
+      html += `<tr class="section-header">`;
+      html += `<th colspan="5"></th>`;
+      html += `<th colspan="4" style="background:#e3f2fd;">${latestDate || '-'}</th>`;
+      html += `<th colspan="3" style="background:#e8f5e9;">누적 IN제외</th>`;
+      html += `<th colspan="3" style="background:#fff8e1;">누적 IN성과</th>`;
+      html += `<th colspan="2" style="background:#fce4ec;">IN포함</th>`;
+      html += `<th colspan="4" style="background:#f3e5f5;">휴일근무</th>`;
+      html += `<th colspan="3" style="background:#e0f2f1;">IN+휴일 제외</th>`;
+      html += `<th></th>`;
+      html += `</tr>`;
+      html += `<tr class="sub-header">`;
+      html += `<th>순위</th><th>센터</th><th>팀</th><th>이름</th><th>입사일</th>`;
+      html += `<th>DB수</th><th>일계약</th><th>실계약</th><th>실계약률</th>`;
+      html += `<th>DB수</th><th>취소</th><th>실계약</th>`;
+      html += `<th>DB수</th><th>취소</th><th>실계약</th>`;
+      html += `<th>계약수</th><th>계약률</th>`;
+      html += `<th>DB수</th><th>일계약</th><th>실계약</th><th>실계약률</th>`;
+      html += `<th>DB수</th><th>실계약</th><th>실계약률</th>`;
+      html += `<th>전일대비</th>`;
+      html += `</tr></thead><tbody>`;
+
+      const totals = { todayDb:0, todayDailyContract:0, todayActualContract:0, cumDbNonIN:0, cumCancelNonIN:0, cumContractNonIN:0, cumDbIN:0, cumCancelIN:0, cumContractIN:0, cumContractAll:0, cumDbAll:0, holDb:0, holDailyContract:0, holActualContract:0 };
+
+      persons.forEach((p, idx) => {
+        const pureDb = p.cumDbNonIN - p.holDb;
+        const pureContract = p.cumContractNonIN - p.holActualContract;
+        const rank = idx + 1;
+
+        // 전월 대비 그룹 변동 색상
+        const grpRank = { 'W그룹': 3, 'E그룹': 2, 'N그룹': 1 };
+        let groupChgStyle = '';
+        if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
+          if (grpRank[p.group] < grpRank[p.prevGroup]) groupChgStyle = 'background:#DDD9C4;'; // 하향
+          else if (grpRank[p.group] > grpRank[p.prevGroup]) groupChgStyle = 'background:#C5D9F1;'; // 상향
+        }
+        const gs = groupChgStyle ? ` style="${groupChgStyle}"` : '';
+
+        html += `<tr>`;
+        html += `<td>${rank}</td><td class="left"${gs}>${p.center}</td><td class="left"${gs}>${p.team}</td><td class="name-cell"${gs}>${p.name}</td><td${gs}>${p.hireDate}</td>`;
+        html += `<td>${p.todayDb}</td><td>${p.todayDailyContract}</td><td>${p.todayActualContract}</td><td class="rate-cell">${fmtRate(p.todayActualContract, p.todayDb)}</td>`;
+        html += `<td>${p.cumDbNonIN}</td><td>${p.cumCancelNonIN}</td><td>${p.cumContractNonIN}</td>`;
+        html += `<td>${p.cumDbIN}</td><td>${p.cumCancelIN}</td><td>${p.cumContractIN}</td>`;
+        html += `<td>${p.cumContractAll}</td><td class="rate-cell">${fmtRate(p.cumContractAll, p.cumDbAll)}</td>`;
+        html += `<td>${p.holDb}</td><td>${p.holDailyContract}</td><td>${p.holActualContract}</td><td class="rate-cell">${fmtRate(p.holActualContract, p.holDb)}</td>`;
+        html += `<td>${Math.max(0, pureDb)}</td><td>${Math.max(0, pureContract)}</td><td class="rate-cell">${fmtRate(Math.max(0, pureContract), Math.max(1, pureDb))}</td>`;
+        html += `<td>${rankChangeHtml(rank, p.name)}</td>`;
+        html += `</tr>`;
+
+        for (const k of Object.keys(totals)) totals[k] += p[k] || 0;
+      });
+
+      const tPureDb = totals.cumDbNonIN - totals.holDb;
+      const tPureContract = totals.cumContractNonIN - totals.holActualContract;
+
+      html += `<tr class="total-row">`;
+      html += `<td colspan="5" style="text-align:right;">합계</td>`;
+      html += `<td>${totals.todayDb}</td><td>${totals.todayDailyContract}</td><td>${totals.todayActualContract}</td><td class="rate-cell">${fmtRate(totals.todayActualContract, totals.todayDb)}</td>`;
+      html += `<td>${totals.cumDbNonIN}</td><td>${totals.cumCancelNonIN}</td><td>${totals.cumContractNonIN}</td>`;
+      html += `<td>${totals.cumDbIN}</td><td>${totals.cumCancelIN}</td><td>${totals.cumContractIN}</td>`;
+      html += `<td>${totals.cumContractAll}</td><td class="rate-cell">${fmtRate(totals.cumContractAll, totals.cumDbAll)}</td>`;
+      html += `<td>${totals.holDb}</td><td>${totals.holDailyContract}</td><td>${totals.holActualContract}</td><td class="rate-cell">${fmtRate(totals.holActualContract, totals.holDb)}</td>`;
+      html += `<td>${Math.max(0, tPureDb)}</td><td>${Math.max(0, tPureContract)}</td><td class="rate-cell">${fmtRate(Math.max(0, tPureContract), Math.max(1, tPureDb))}</td>`;
+      html += `<td></td>`;
+      html += `</tr>`;
+
+      html += `</tbody></table></div></div>`;
+    }
+    return html;
+  }
+
+  document.getElementById('tabMain').innerHTML = renderGroups(groupedMain);
+  document.getElementById('tabTalkis').innerHTML = renderGroups(groupedTalkis);
+  document.getElementById('dashboardArea').classList.remove('hidden');
+  document.getElementById('emptyState').classList.add('hidden');
+}
+
+// ══════════════════════════════════════════════
+// ── Downloads ──
+// ══════════════════════════════════════════════
+function getActiveTabPanel() {
+  const active = document.querySelector('.tab-panel.active');
+  return active;
+}
+
+function getActiveTabName() {
+  const btn = document.querySelector('.tab-btn.active');
+  return btn ? btn.textContent.trim() : 'dashboard';
+}
+
+function downloadPng(type) {
+  const panel = getActiveTabPanel();
+  if (!panel || !panel.innerHTML) return;
+
+  if (type === 'talkis') {
+    const talkisPanel = document.getElementById('tabTalkis');
+    if (!talkisPanel || !talkisPanel.innerHTML) return;
+    html2canvas(talkisPanel, { scale: 2, backgroundColor: '#f0f2f5' }).then(canvas => {
+      const link = document.createElement('a');
+      link.download = `톡이즈_성과_${new Date().toISOString().slice(0,10)}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    });
+    return;
+  }
+
+  const engGroups = ['W그룹', 'E그룹', 'N그룹'];
+  const langGroups = ['제2외국어'];
+  const targetGroups = type === 'lang' ? langGroups : engGroups;
+  const label = type === 'lang' ? '제2외국어' : '영어';
+
+  // 해당 그룹만 보이도록 임시 숨김 처리
+  const sections = panel.querySelectorAll('.group-section');
+  const hidden = [];
+  sections.forEach(sec => {
+    const header = sec.querySelector('.group-header');
+    if (!header) return;
+    const groupName = header.textContent.replace(/\d+명$/, '').trim();
+    if (!targetGroups.includes(groupName)) {
+      sec.style.display = 'none';
+      hidden.push(sec);
+    }
+  });
+
+  // info-bar도 포함
+  html2canvas(panel, { scale: 2, backgroundColor: '#f0f2f5' }).then(canvas => {
+    const link = document.createElement('a');
+    link.download = `${getActiveTabName()}_${label}_성과_${new Date().toISOString().slice(0,10)}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+    // 원복
+    hidden.forEach(sec => { sec.style.display = ''; });
+  }).catch(() => {
+    hidden.forEach(sec => { sec.style.display = ''; });
+  });
+}
+
+function generateHtmlBlob(tab) {
+  const prevTab = currentTab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  const tabBtn = tab === 'main' ? 0 : 1;
+  document.querySelectorAll('.tab-btn')[tabBtn].classList.add('active');
+  document.getElementById(tab === 'main' ? 'tabMain' : 'tabTalkis').classList.add('active');
+  currentTab = tab;
+  displayKpi(tab);
+
+  const html = document.documentElement.outerHTML;
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+
+  // 원래 탭으로 복원
+  if (prevTab !== tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    const prevBtn = prevTab === 'main' ? 0 : 1;
+    document.querySelectorAll('.tab-btn')[prevBtn].classList.add('active');
+    document.getElementById(prevTab === 'main' ? 'tabMain' : 'tabTalkis').classList.add('active');
+    currentTab = prevTab;
+    displayKpi(prevTab);
+  }
+  return blob;
+}
+
+function downloadHtml(tab) {
+  const tabName = tab === 'main' ? '뇌새김' : '톡이즈';
+  const blob = generateHtmlBlob(tab);
+  const link = document.createElement('a');
+  link.download = `WM_${tabName}_데일리성과_${new Date().toISOString().slice(0,10)}.html`;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function downloadExcel() {
+  const panel = getActiveTabPanel();
+  if (!panel) return;
+  const tables = panel.querySelectorAll('.perf-table');
+  const headers = panel.querySelectorAll('.group-header');
+  if (tables.length === 0) return;
+  const wb = XLSX.utils.book_new();
+  const rows = [];
+  tables.forEach((table, i) => {
+    const groupName = headers[i] ? headers[i].textContent.replace(/\d+명$/, '').trim() : '';
+    if (i > 0) rows.push([]);
+    rows.push([groupName]);
+    const trs = table.querySelectorAll('tr');
+    trs.forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th, td').forEach(cell => {
+        const colspan = parseInt(cell.getAttribute('colspan')) || 1;
+        const val = cell.textContent.trim();
+        const num = val.replace(/,/g, '');
+        row.push(isNaN(num) || val === '' || val === '-' ? val : Number(num));
+        for (let c = 1; c < colspan; c++) row.push('');
+      });
+      rows.push(row);
+    });
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb, ws, getActiveTabName().slice(0, 31));
+  XLSX.writeFile(wb, `${getActiveTabName()}_성과_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+
+// ══════════════════════════════════════════════
+// ── GitHub 동기화 ──
+// ══════════════════════════════════════════════
+const GH_REPO = 'wminfobin-byte/wm_daily';
+const GH_FILE = 'data.json';
+const GH_BRANCH = 'main';
+
+function getGhToken() { return localStorage.getItem('gh_sync_token') || ''; }
+
+function saveTokenAndSync() {
+  const token = document.getElementById('ghToken').value.trim();
+  if (!token) {
+    document.getElementById('tokenError').textContent = '토큰을 입력해주세요.';
+    document.getElementById('tokenError').style.display = 'block';
+    return;
+  }
+  localStorage.setItem('gh_sync_token', token);
+  document.getElementById('tokenModal').classList.remove('active');
+  syncToGitHub();
+}
+
+async function syncToGitHub() {
+  const token = getGhToken();
+  if (!token) {
+    document.getElementById('ghToken').value = '';
+    document.getElementById('tokenError').style.display = 'none';
+    document.getElementById('tokenModal').classList.add('active');
+    document.getElementById('ghToken').focus();
+    return;
+  }
+
+  const btn = document.getElementById('btnSync');
+  const origText = btn.textContent;
+  btn.textContent = '🔄 동기화 중...';
+  btn.style.opacity = '0.6';
+  btn.style.pointerEvents = 'none';
+
+  try {
+    // 1. IndexedDB에서 전체 데이터 읽기
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT], 'readonly');
+    const readAll = (storeName) => new Promise((resolve, reject) => {
+      const store = tx.objectStore(storeName);
+      const result = {};
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { result[cursor.key] = cursor.value; cursor.continue(); }
+        else resolve(result);
+      };
+      req.onerror = () => reject(req.error);
+    });
+    const [dates, keyMeta, roster, contract] = await Promise.all([
+      readAll(STORE_DATES), readAll(STORE_KEYS), readAll(STORE_ROSTER), readAll(STORE_CONTRACT)
+    ]);
+    db.close();
+
+    const sharedData = { version: 1, exportedAt: new Date().toISOString(), dates, keyMeta, roster, contract };
+    const content = btoa(unescape(encodeURIComponent(JSON.stringify(sharedData))));
+
+    // 2. 기존 파일의 SHA 가져오기 (업데이트 시 필요)
+    let sha = null;
+    try {
+      const existing = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}?ref=${GH_BRANCH}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (existing.ok) {
+        const data = await existing.json();
+        sha = data.sha;
+      }
+    } catch {}
+
+    // 3. GitHub API로 커밋
+    const body = {
+      message: `데이터 동기화 (${new Date().toLocaleString('ko-KR')})`,
+      content,
+      branch: GH_BRANCH,
+    };
+    if (sha) body.sha = sha;
+
+    const res = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem('gh_sync_token');
+        showStatus('토큰이 유효하지 않습니다. 다시 입력해주세요.', 'error');
+        syncToGitHub(); // 토큰 모달 다시 열기
+        return;
+      }
+      throw new Error(err.message || `HTTP ${res.status}`);
+    }
+
+    updateSyncTime();
+    btn.textContent = '✅ 완료!';
+    showStatus('동기화 완료! 다른 사용자들이 접속하면 최신 데이터를 볼 수 있습니다.', 'success');
+    setTimeout(() => { btn.textContent = origText; }, 3000);
+  } catch (err) {
+    showStatus('동기화 오류: ' + (err.message || err), 'error');
+    btn.textContent = origText;
+  } finally {
+    btn.style.opacity = '';
+    btn.style.pointerEvents = '';
+  }
+}
+
+function updateSyncTime() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const str = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  localStorage.setItem('gh_last_sync', str);
+  const el = document.getElementById('syncTime');
+  el.textContent = `최종 동기화: ${str}`;
+  el.style.display = '';
+}
+
+function restoreSyncTime() {
+  const saved = localStorage.getItem('gh_last_sync');
+  if (saved) {
+    const el = document.getElementById('syncTime');
+    el.textContent = `최종 동기화: ${saved}`;
+    el.style.display = '';
+  }
+}
+
+let autoSyncInterval = null;
+function startAutoSync() {
+  if (autoSyncInterval) return;
+  autoSyncInterval = setInterval(() => {
+    if (authPassed && getGhToken()) syncToGitHub();
+  }, 60000);
+}
+
+async function loadSharedData() {
+  try {
+    // raw.githubusercontent.com에서 즉시 로드 (GitHub Pages 배포 대기 불필요)
+    const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${GH_FILE}?t=${Date.now()}`);
+    if (!res.ok) return false;
+    const shared = await res.json();
+    if (!shared.dates || !shared.roster) return false;
+
+    // Restore roster
+    rosterByMonth = {};
+    for (const [monthKey, rows] of Object.entries(shared.roster)) {
+      rosterByMonth[monthKey] = parseRosterRows(rows);
+    }
+    const latestRosterMonth = Object.keys(rosterByMonth).sort().pop();
+    if (latestRosterMonth) {
+      rosterMap = rosterByMonth[latestRosterMonth];
+      document.getElementById('uploadRoster').classList.add('loaded');
+      const totalNames = Object.values(rosterByMonth).reduce((s, m) => Math.max(s, m.size), 0);
+      document.getElementById('rosterStatus').textContent = `${totalNames}명 (공유 데이터)`;
+    }
+
+    // Restore contract
+    if (shared.contract) {
+      contractByMonth = {};
+      for (const [monthKey, rows] of Object.entries(shared.contract)) {
+        contractByMonth[monthKey] = rows;
+      }
+      const latestContractMonth = Object.keys(contractByMonth).sort().pop();
+      if (latestContractMonth) {
+        contractData = contractByMonth[latestContractMonth];
+        document.getElementById('uploadContract').classList.add('loaded');
+        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터)`;
+      }
+    }
+
+    // Store dates/keyMeta into IndexedDB so loadAccumulated works
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+    const dateStore = tx.objectStore(STORE_DATES);
+    const keyStore = tx.objectStore(STORE_KEYS);
+    for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
+    for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+
+    if (rosterMap && contractData) {
+      await tryBuildTab4();
+    }
+
+    const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
+    showStatus(`공유 데이터를 불러왔습니다. (${exportDate} 기준)`, 'success');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Favicon: 로고를 정사각형으로 변환 ──
+function setupFavicon() {
+  const img = new Image();
+  img.onload = () => {
+    const size = Math.max(img.width, img.height);
+    const cvs = document.createElement('canvas');
+    cvs.width = size;
+    cvs.height = size;
+    const ctx = cvs.getContext('2d');
+    const x = (size - img.width) / 2;
+    const y = (size - img.height) / 2;
+    ctx.drawImage(img, x, y);
+    try {
+      const favicon = document.getElementById('favicon');
+      if (favicon) favicon.href = cvs.toDataURL('image/png');
+    } catch {}
+  };
+  img.src = document.querySelector('.header-left img').src;
+}
+
+// ── Init ──
+(async function init() {
+  setupFavicon();
+  restoreSyncTime();
+  refreshStorageDisplay().catch(() => {});
+  updateLastUpdateTime();
+  await loadSavedFiles().catch(() => {});
+  // If no local data loaded, try fetching shared data.json
+  if (!rosterMap || !contractData) {
+    await loadSharedData().catch(() => {});
+  }
+})();
+</script>
+</body>
+</html>
