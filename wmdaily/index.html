@@ -555,7 +555,7 @@ function authLogin() {
     authPassed = true;
     document.getElementById('btnAdmin').textContent = '데이터 업로드';
     document.getElementById('btnSync').style.display = '';
-    document.getElementById('syncTime').style.display = '';
+    restoreSyncTime();
     document.getElementById('authModal').classList.remove('active');
     document.getElementById('uploadModal').classList.add('active');
     startAutoSync();
@@ -2504,7 +2504,6 @@ function setupFavicon() {
 // ── Init ──
 (async function init() {
   setupFavicon();
-  restoreSyncTime();
   refreshStorageDisplay().catch(() => {});
   updateLastUpdateTime();
   await loadSavedFiles().catch(() => {});
