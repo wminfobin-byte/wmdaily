@@ -89,6 +89,17 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
+  /* Quick-jump group nav pills */
+  .quick-nav { display: flex; align-items: center; gap: 4px; margin-left: 20px; padding: 3px; background: #f0f2f5; border-radius: 8px; }
+  .quick-nav-btn { position: relative; padding: 6px 14px; border: none; border-radius: 6px; background: transparent; color: #888; font-size: 12px; font-weight: 700; cursor: pointer; transition: all .25s cubic-bezier(.4,0,.2,1); white-space: nowrap; overflow: hidden; }
+  .quick-nav-btn::before { content: ''; position: absolute; inset: 0; border-radius: 6px; opacity: 0; transition: opacity .25s; }
+  .quick-nav-btn:hover { color: #555; background: rgba(255,255,255,0.7); }
+  .quick-nav-btn.qn-w:hover, .quick-nav-btn.qn-w.active { color: #fff; background: #1565c0; box-shadow: 0 2px 8px rgba(21,101,192,0.35); }
+  .quick-nav-btn.qn-e:hover, .quick-nav-btn.qn-e.active { color: #fff; background: #1e88e5; box-shadow: 0 2px 8px rgba(30,136,229,0.35); }
+  .quick-nav-btn.qn-n:hover, .quick-nav-btn.qn-n.active { color: #fff; background: #42a5f5; box-shadow: 0 2px 8px rgba(66,165,245,0.35); }
+  .quick-nav-btn.qn-lang:hover, .quick-nav-btn.qn-lang.active { color: #fff; background: #66bb6a; box-shadow: 0 2px 8px rgba(102,187,106,0.35); }
+  .quick-nav-btn.active { transform: scale(1.02); }
+
   /* Performance table styles */
   .group-section { margin-bottom: 24px; }
   .group-header { font-size: 14px; font-weight: 700; padding: 8px 14px; border-radius: 8px 8px 0 0; color: #fff; display: flex; justify-content: space-between; align-items: center; }
@@ -402,6 +413,12 @@
     <div class="tab-bar" id="tabBar">
       <button class="tab-btn active" onclick="switchTab('main', this)">뇌새김</button>
       <button class="tab-btn" onclick="switchTab('talkis', this)">톡이즈</button>
+      <div class="quick-nav" id="quickNav">
+        <button class="quick-nav-btn qn-w" data-group="W그룹">W그룹</button>
+        <button class="quick-nav-btn qn-e" data-group="E그룹">E그룹</button>
+        <button class="quick-nav-btn qn-n" data-group="N그룹">N그룹</button>
+        <button class="quick-nav-btn qn-lang" data-group="제2외국어">제2외국어</button>
+      </div>
       <div class="tab-actions">
         <button class="btn-download" onclick="downloadPng('eng')">🖼️ PNG(영어)</button>
         <button class="btn-download" onclick="downloadPng('lang')">🖼️ PNG(제2외국어)</button>
@@ -592,6 +609,45 @@ function switchTab(tabId, btn) {
   document.getElementById(tabId === 'main' ? 'tabMain' : 'tabTalkis').classList.add('active');
   currentTab = tabId;
   displayKpi(currentTab);
+  // Show quick-nav only on 뇌새김 tab
+  const qn = document.getElementById('quickNav');
+  if (qn) qn.style.display = tabId === 'main' ? 'flex' : 'none';
+}
+
+// ── Quick-nav: click → scroll to group ──
+document.getElementById('quickNav').addEventListener('click', (e) => {
+  const btn = e.target.closest('.quick-nav-btn');
+  if (!btn) return;
+  const groupKey = btn.dataset.group;
+  const headers = document.querySelectorAll('#tabMain .group-header');
+  for (const h of headers) {
+    if (h.textContent.includes(groupKey)) {
+      const y = h.getBoundingClientRect().top + window.scrollY - 16;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+      document.querySelectorAll('.quick-nav-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      break;
+    }
+  }
+});
+
+// ── Quick-nav: scroll spy ──
+let qnSpyObserver = null;
+function setupQuickNavSpy() {
+  if (qnSpyObserver) qnSpyObserver.disconnect();
+  qnSpyObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting && currentTab === 'main') {
+        const txt = entry.target.textContent.replace(/\d+명$/, '').trim();
+        const match = document.querySelector(`.quick-nav-btn[data-group="${txt}"]`);
+        if (match) {
+          document.querySelectorAll('.quick-nav-btn').forEach(b => b.classList.remove('active'));
+          match.classList.add('active');
+        }
+      }
+    }
+  }, { rootMargin: '-10% 0px -70% 0px' });
+  document.querySelectorAll('#tabMain .group-header').forEach(h => qnSpyObserver.observe(h));
 }
 
 function displayKpi(tab) {
@@ -2160,6 +2216,7 @@ async function tryBuildTab4() {
   document.getElementById('tabTalkis').innerHTML = renderGroups(groupedTalkis);
   document.getElementById('dashboardArea').classList.remove('hidden');
   document.getElementById('emptyState').classList.add('hidden');
+  setupQuickNavSpy();
 }
 
 // ══════════════════════════════════════════════
@@ -2519,16 +2576,143 @@ function setupFavicon() {
   }
 })();
 
-// ── Top Button ──
+// ── Floating FAB: Group Nav + Top Button ──
 (function() {
-  const btn = document.createElement('button');
-  btn.id = 'topBtn';
-  btn.textContent = 'TOP';
-  btn.style.cssText = 'display:none;position:fixed;bottom:32px;right:32px;z-index:9999;width:48px;height:48px;border-radius:50%;border:none;background:#4a90d9;color:#fff;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.25);transition:opacity .2s';
-  btn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-  document.body.appendChild(btn);
+  const SIZE = 48, STROKE = 3, R = (SIZE - STROKE) / 2, CIRC = 2 * Math.PI * R;
+  const GROUPS = [
+    { key: 'W그룹',   label: 'W',    color: '#1565c0' },
+    { key: 'E그룹',   label: 'E',    color: '#1e88e5' },
+    { key: 'N그룹',   label: 'N',    color: '#42a5f5' },
+    { key: '제2외국어', label: '2nd', color: '#66bb6a' },
+  ];
+
+  // Container
+  const fab = document.createElement('div');
+  fab.id = 'fabWrap';
+  fab.style.cssText = 'position:fixed;bottom:28px;right:28px;z-index:9999;display:flex;flex-direction:column;align-items:center;gap:0;opacity:0;visibility:hidden;transform:translateY(12px);transition:opacity .35s cubic-bezier(.4,0,.2,1),transform .35s cubic-bezier(.4,0,.2,1),visibility .35s;';
+
+  // ── Group menu (hidden by default) ──
+  const menu = document.createElement('div');
+  menu.id = 'fabMenu';
+  menu.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:14px;opacity:0;visibility:hidden;transform:translateY(8px);transition:opacity .3s cubic-bezier(.4,0,.2,1),transform .3s cubic-bezier(.4,0,.2,1),visibility .3s;pointer-events:none;';
+
+  GROUPS.forEach((g, i) => {
+    const item = document.createElement('div');
+    item.style.cssText = `position:relative;display:flex;align-items:center;justify-content:center;opacity:0;transform:translateY(10px) scale(0.5);transition:opacity .25s ${i * 0.04}s cubic-bezier(.34,1.56,.64,1),transform .25s ${i * 0.04}s cubic-bezier(.34,1.56,.64,1);`;
+
+    // Tooltip (left side)
+    const tip = document.createElement('span');
+    tip.textContent = g.key;
+    tip.style.cssText = 'position:absolute;right:calc(100% + 10px);white-space:nowrap;background:#333;color:#fff;font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;opacity:0;transform:translateX(4px);transition:opacity .15s,transform .15s;pointer-events:none;';
+
+    // Circle button
+    const btn = document.createElement('button');
+    btn.dataset.group = g.key;
+    btn.textContent = g.label;
+    btn.style.cssText = `width:40px;height:40px;border-radius:50%;border:none;background:${g.color};color:#fff;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.2);transition:transform .2s,box-shadow .2s;letter-spacing:-0.5px;`;
+    btn.addEventListener('mouseenter', () => { btn.style.transform = 'scale(1.12)'; btn.style.boxShadow = '0 5px 16px rgba(0,0,0,0.3)'; tip.style.opacity = '1'; tip.style.transform = 'translateX(0)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.transform = 'scale(1)'; btn.style.boxShadow = '0 3px 10px rgba(0,0,0,0.2)'; tip.style.opacity = '0'; tip.style.transform = 'translateX(4px)'; });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = document.getElementById('tabMain');
+      if (!panel) return;
+      const headers = panel.querySelectorAll('.group-header');
+      for (const h of headers) {
+        if (h.textContent.includes(g.key)) {
+          const y = h.getBoundingClientRect().top + window.scrollY - 16;
+          window.scrollTo({ top: y, behavior: 'smooth' });
+          break;
+        }
+      }
+      toggleMenu(false);
+    });
+
+    item.appendChild(tip);
+    item.appendChild(btn);
+    menu.appendChild(item);
+  });
+
+  // ── Nav toggle button (hamburger / close) ──
+  const navBtn = document.createElement('button');
+  navBtn.id = 'fabNavBtn';
+  navBtn.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect y="3" width="18" height="2" rx="1" fill="#fff" class="bar bar1"/><rect y="8" width="18" height="2" rx="1" fill="#fff" class="bar bar2"/><rect y="13" width="18" height="2" rx="1" fill="#fff" class="bar bar3"/></svg>`;
+  navBtn.style.cssText = `width:${SIZE}px;height:${SIZE}px;border-radius:50%;border:none;background:#0F243E;color:#fff;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.25);transition:transform .3s cubic-bezier(.4,0,.2,1),box-shadow .2s;position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:10px;`;
+
+  // Inject hamburger animation styles
+  const fabStyle = document.createElement('style');
+  fabStyle.textContent = `
+    #fabNavBtn .bar { transition: transform .25s cubic-bezier(.4,0,.2,1), opacity .2s; transform-origin: center; }
+    #fabNavBtn.open .bar1 { transform: translateY(5px) rotate(45deg); }
+    #fabNavBtn.open .bar2 { opacity: 0; }
+    #fabNavBtn.open .bar3 { transform: translateY(-5px) rotate(-45deg); }
+    #fabNavBtn:hover { box-shadow: 0 6px 20px rgba(15,36,62,0.45); }
+  `;
+  document.head.appendChild(fabStyle);
+
+  let menuOpen = false;
+  function toggleMenu(forceState) {
+    menuOpen = typeof forceState === 'boolean' ? forceState : !menuOpen;
+    navBtn.classList.toggle('open', menuOpen);
+    if (menuOpen) {
+      navBtn.style.transform = 'rotate(0deg)';
+      menu.style.opacity = '1'; menu.style.visibility = 'visible'; menu.style.transform = 'translateY(0)'; menu.style.pointerEvents = 'auto';
+      menu.querySelectorAll(':scope > div').forEach(item => { item.style.opacity = '1'; item.style.transform = 'translateY(0) scale(1)'; });
+    } else {
+      navBtn.style.transform = 'rotate(0deg)';
+      menu.style.opacity = '0'; menu.style.visibility = 'hidden'; menu.style.transform = 'translateY(8px)'; menu.style.pointerEvents = 'none';
+      menu.querySelectorAll(':scope > div').forEach(item => { item.style.opacity = '0'; item.style.transform = 'translateY(10px) scale(0.5)'; });
+    }
+  }
+  navBtn.addEventListener('click', () => toggleMenu());
+
+  // Close on outside click
+  document.addEventListener('click', (e) => { if (menuOpen && !fab.contains(e.target)) toggleMenu(false); });
+
+  // ── TOP button (with progress ring) ──
+  const topBtn = document.createElement('div');
+  topBtn.id = 'topBtn';
+  topBtn.innerHTML = `
+    <svg width="${SIZE}" height="${SIZE}" style="position:absolute;top:0;left:0;transform:rotate(-90deg)">
+      <circle cx="${SIZE/2}" cy="${SIZE/2}" r="${R}" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="${STROKE}"/>
+      <circle id="topBtnRing" cx="${SIZE/2}" cy="${SIZE/2}" r="${R}" fill="none" stroke="#fff"
+        stroke-width="${STROKE}" stroke-linecap="round"
+        stroke-dasharray="${CIRC}" stroke-dashoffset="${CIRC}" style="transition:stroke-dashoffset .15s"/>
+    </svg>
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-54%)">
+      <path d="M8 13V3M8 3L3 8M8 3l5 5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span style="position:absolute;bottom:5px;left:50%;transform:translateX(-50%);font-size:7px;font-weight:800;color:rgba(255,255,255,0.7);letter-spacing:0.5px;">TOP</span>`;
+  topBtn.style.cssText = `position:relative;width:${SIZE}px;height:${SIZE}px;border-radius:50%;background:#0F243E;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.25);transition:transform .2s,box-shadow .2s;`;
+  topBtn.addEventListener('mouseenter', () => { topBtn.style.transform = 'scale(1.08)'; topBtn.style.boxShadow = '0 6px 20px rgba(15,36,62,0.45)'; });
+  topBtn.addEventListener('mouseleave', () => { topBtn.style.transform = 'scale(1)'; topBtn.style.boxShadow = '0 4px 14px rgba(0,0,0,0.25)'; });
+  topBtn.addEventListener('click', () => { window.scrollTo({ top: 0, behavior: 'smooth' }); toggleMenu(false); });
+
+  // Assemble
+  fab.appendChild(menu);
+  fab.appendChild(navBtn);
+  fab.appendChild(topBtn);
+  document.body.appendChild(fab);
+
+  // ── Scroll: show/hide FAB + update progress ring ──
+  const ring = document.getElementById('topBtnRing');
+  let ticking = false;
   window.addEventListener('scroll', () => {
-    btn.style.display = window.scrollY > 300 ? 'block' : 'none';
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      const scrollY = window.scrollY;
+      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+      const show = scrollY > 300;
+      if (show && fab.dataset.show !== '1') {
+        fab.dataset.show = '1'; fab.style.opacity = '1'; fab.style.visibility = 'visible'; fab.style.transform = 'translateY(0)';
+      } else if (!show && fab.dataset.show === '1') {
+        fab.dataset.show = '0'; fab.style.opacity = '0'; fab.style.visibility = 'hidden'; fab.style.transform = 'translateY(12px)';
+        toggleMenu(false);
+      }
+      const pct = maxScroll > 0 ? scrollY / maxScroll : 0;
+      ring.style.strokeDashoffset = CIRC * (1 - pct);
+      ticking = false;
+    });
   });
 })();
 </script>
