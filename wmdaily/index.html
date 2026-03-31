@@ -406,8 +406,8 @@
     </div>
   </div>
   <div class="empty-state" id="emptyState">
-    <div style="font-size:48px; margin-bottom:12px;">📊</div>
-    <p>우측 상단 <strong>데이터 업로드</strong> 버튼을 눌러<br>명단, DB수, 계약수 파일을 업로드해주세요.</p>
+    <div style="font-size:48px; margin-bottom:12px;" id="emptyStateIcon">📊</div>
+    <p id="emptyStateMsg">우측 상단 <strong>데이터 업로드</strong> 버튼을 눌러<br>명단, DB수, 계약수 파일을 업로드해주세요.</p>
   </div>
   <div id="dashboardArea" class="hidden">
     <div class="tab-bar" id="tabBar">
@@ -2578,7 +2578,13 @@ function setupFavicon() {
   await loadSavedFiles().catch(() => {});
   // If no local data loaded, try fetching shared data.json
   if (!rosterMap || !contractData) {
-    await loadSharedData().catch(() => {});
+    document.getElementById('emptyStateIcon').textContent = '⏳';
+    document.getElementById('emptyStateMsg').innerHTML = '공유 데이터를 불러오는 중입니다…<br><small style="color:#888;">데이터 크기에 따라 시간이 걸릴 수 있습니다.</small>';
+    const loaded = await loadSharedData().catch(() => false);
+    if (!loaded) {
+      document.getElementById('emptyStateIcon').textContent = '📊';
+      document.getElementById('emptyStateMsg').innerHTML = '우측 상단 <strong>데이터 업로드</strong> 버튼을 눌러<br>명단, DB수, 계약수 파일을 업로드해주세요.';
+    }
   }
 })();
 
