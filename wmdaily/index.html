@@ -1094,24 +1094,36 @@ async function toggleArchiveList() {
   const el = document.getElementById('archiveList');
   if (el.style.display !== 'none') { el.style.display = 'none'; return; }
   try {
-    const db = await openDB();
-    const tx = db.transaction(STORE_ARCHIVE, 'readonly');
-    const store = tx.objectStore(STORE_ARCHIVE);
-    const items = [];
-    await new Promise((resolve, reject) => {
-      const req = store.openCursor();
-      req.onsuccess = e => {
-        const cursor = e.target.result;
-        if (cursor) {
-          items.push({ name: cursor.key, date: cursor.value?.date || '' });
-          cursor.continue();
-        } else {
-          resolve();
+    let items = [];
+    if (authPassed) {
+      // 로그인 사용자: 로컬 IndexedDB에서 읽기
+      const db = await openDB();
+      const tx = db.transaction(STORE_ARCHIVE, 'readonly');
+      const store = tx.objectStore(STORE_ARCHIVE);
+      await new Promise((resolve, reject) => {
+        const req = store.openCursor();
+        req.onsuccess = e => {
+          const cursor = e.target.result;
+          if (cursor) {
+            items.push({ name: cursor.key, date: cursor.value?.date || '' });
+            cursor.continue();
+          } else {
+            resolve();
+          }
+        };
+        req.onerror = () => reject(req.error);
+      });
+      db.close();
+    } else {
+      // 비로그인 사용자: GitHub 공유 데이터에서 읽기
+      try {
+        const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${GH_FILE}?t=${Date.now()}`);
+        if (res.ok) {
+          const shared = await res.json();
+          items = shared.archiveMeta || [];
         }
-      };
-      req.onerror = () => reject(req.error);
-    });
-    db.close();
+      } catch {}
+    }
     if (items.length === 0) {
       el.innerHTML = '<div style="color:#888;padding:4px 0;">저장된 파일이 없습니다.</div>';
     } else {
@@ -1133,21 +1145,34 @@ async function toggleArchiveList() {
 
 async function downloadArchiveFile(fileName) {
   try {
-    const db = await openDB();
-    const tx = db.transaction(STORE_ARCHIVE, 'readonly');
-    const item = await new Promise((resolve, reject) => {
-      const req = tx.objectStore(STORE_ARCHIVE).get(fileName);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-    db.close();
-    if (!item || !item.data) { alert('파일 데이터를 찾을 수 없습니다.'); return; }
-    const blob = new Blob([item.data]);
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(link.href);
+    if (authPassed) {
+      // 로그인 사용자: 로컬 IndexedDB에서 다운로드
+      const db = await openDB();
+      const tx = db.transaction(STORE_ARCHIVE, 'readonly');
+      const item = await new Promise((resolve, reject) => {
+        const req = tx.objectStore(STORE_ARCHIVE).get(fileName);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      db.close();
+      if (!item || !item.data) { alert('파일 데이터를 찾을 수 없습니다.'); return; }
+      const blob = new Blob([item.data]);
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } else {
+      // 비로그인 사용자: GitHub에서 다운로드
+      const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/archive/${encodeURIComponent(fileName)}?t=${Date.now()}`);
+      if (!res.ok) { alert('파일을 찾을 수 없습니다. 동기화가 필요합니다.'); return; }
+      const blob = await res.blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = fileName;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }
   } catch (err) {
     alert('다운로드 오류: ' + err.message);
   }
@@ -2401,9 +2426,25 @@ async function syncToGitHub() {
     const [dates, keyMeta, roster, contract] = await Promise.all([
       readAll(STORE_DATES), readAll(STORE_KEYS), readAll(STORE_ROSTER), readAll(STORE_CONTRACT)
     ]);
+
+    // 아카이브 파일 목록도 읽기
+    const archiveMeta = [];
+    try {
+      const txA = db.transaction(STORE_ARCHIVE, 'readonly');
+      const storeA = txA.objectStore(STORE_ARCHIVE);
+      await new Promise((resolve, reject) => {
+        const req = storeA.openCursor();
+        req.onsuccess = e => {
+          const cursor = e.target.result;
+          if (cursor) { archiveMeta.push({ name: cursor.key, date: cursor.value?.date || '' }); cursor.continue(); }
+          else resolve();
+        };
+        req.onerror = () => reject(req.error);
+      });
+    } catch {}
     db.close();
 
-    const sharedData = { version: 1, exportedAt: new Date().toISOString(), dates, keyMeta, roster, contract };
+    const sharedData = { version: 1, exportedAt: new Date().toISOString(), dates, keyMeta, roster, contract, archiveMeta };
     const content = btoa(unescape(encodeURIComponent(JSON.stringify(sharedData))));
 
     // 2. 기존 파일의 SHA 가져오기 (업데이트 시 필요)
@@ -2444,6 +2485,44 @@ async function syncToGitHub() {
         return;
       }
       throw new Error(err.message || `HTTP ${res.status}`);
+    }
+
+    // 4. 아카이브 파일 원본을 GitHub archive/ 폴더에 업로드
+    if (archiveMeta.length > 0) {
+      btn.textContent = '🔄 아카이브 업로드 중...';
+      const dbA = await openDB();
+      const txA2 = dbA.transaction(STORE_ARCHIVE, 'readonly');
+      const storeA2 = txA2.objectStore(STORE_ARCHIVE);
+      const archiveItems = await new Promise((resolve, reject) => {
+        const items = [];
+        const req = storeA2.openCursor();
+        req.onsuccess = e => {
+          const cursor = e.target.result;
+          if (cursor) { items.push({ name: cursor.key, data: cursor.value.data }); cursor.continue(); }
+          else resolve(items);
+        };
+        req.onerror = () => reject(req.error);
+      });
+      dbA.close();
+
+      for (const item of archiveItems) {
+        const filePath = `archive/${item.name}`;
+        const fileContent = btoa(new Uint8Array(item.data).reduce((s, b) => s + String.fromCharCode(b), ''));
+        let fileSha = null;
+        try {
+          const existRes = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(filePath)}?ref=${GH_BRANCH}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (existRes.ok) { fileSha = (await existRes.json()).sha; }
+        } catch {}
+        const fileBody = { message: `아카이브: ${item.name}`, content: fileContent, branch: GH_BRANCH };
+        if (fileSha) fileBody.sha = fileSha;
+        await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(filePath)}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(fileBody),
+        });
+      }
     }
 
     updateSyncTime();
