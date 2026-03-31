@@ -2538,9 +2538,11 @@ async function loadSharedData() {
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
     if (exportDate) {
       document.getElementById('lastUpdate').textContent = `최종 업데이트: ${exportDate}`;
-      const syncEl = document.getElementById('syncTime');
-      syncEl.textContent = `최종 동기화: ${exportDate}`;
-      syncEl.style.display = '';
+      if (authPassed) {
+        const syncEl = document.getElementById('syncTime');
+        syncEl.textContent = `최종 동기화: ${exportDate}`;
+        syncEl.style.display = '';
+      }
     }
     showStatus(`공유 데이터를 불러왔습니다. (${exportDate} 기준)`, 'success');
     return true;
