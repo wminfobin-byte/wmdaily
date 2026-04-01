@@ -2124,7 +2124,18 @@ async function tryBuildTab4() {
         const ct = Math.max(0, p.cumContractNonIN - p.holActualContract);
         return { db, ct, rate: db > 0 ? ct / db : 0 };
       }
+      // 그룹 변동 구분: 하향자=최상단(-1), 일반=중간(0), 상향자=최하단(1)
+      const grpRank = { 'W그룹': 3, 'E그룹': 2, 'N그룹': 1 };
+      function groupChangeOrder(p) {
+        if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
+          if (grpRank[p.group] < grpRank[p.prevGroup]) return -1; // 하향 → 최상단
+          if (grpRank[p.group] > grpRank[p.prevGroup]) return 1;  // 상향 → 최하단
+        }
+        return 0; // 변동 없음 → 중간
+      }
       persons.sort((a, b) => {
+        const orderA = groupChangeOrder(a), orderB = groupChangeOrder(b);
+        if (orderA !== orderB) return orderA - orderB;
         const pa = pureValues(a), pb = pureValues(b);
         const bottomA = pa.db < 100 ? 1 : 0;
         const bottomB = pb.db < 100 ? 1 : 0;
@@ -2198,7 +2209,6 @@ async function tryBuildTab4() {
         const rank = idx + 1;
 
         // 전월 대비 그룹 변동 색상
-        const grpRank = { 'W그룹': 3, 'E그룹': 2, 'N그룹': 1 };
         let groupChgStyle = '';
         if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
           if (grpRank[p.group] < grpRank[p.prevGroup]) groupChgStyle = 'background:#DDD9C4;'; // 하향
