@@ -1149,27 +1149,34 @@ function getMediaDOWTableByPeriod(f,p){var gc=getBatchDOWDateCounts(p),s={};MEDI
 function getDBTypeBreakdown(){var m={};DB_TYPES.forEach(function(t){m[t]=0;});allData.forEach(function(d){if(!d.isTimeboard&&!d.isSpecial)m[d.dbType]++;});return m;}
 function getMediaGroupBreakdown(){var m={};MEDIA_TYPES.forEach(function(t){m[t]=0;});allData.forEach(function(d){if(!d.isTimeboard&&!d.isSpecial&&m.hasOwnProperty(d.media))m[d.media]++;});return m;}
 // 동일 날짜+시간에 2개 이상 패키지가 동시 집행된 경우 식별 (평균 계산에서 제외)
+// allData와 tbspData를 각각 독립적으로 체크 (소스 간 미디어코드 형식 차이로 인한 오탐 방지)
 function getOverlapDateHours(type){
-    var pkgMap={};
     var fn=type==='timeboard'?function(d){return d.isTimeboard;}:function(d){return d.isSpecial;};
+    // allData 내에서 중복 체크
+    var pkgMap1={};
     allData.filter(fn).forEach(function(d){
         var hr=d.broadcastHour!==null?d.broadcastHour:'unknown';
         var k=d.dateStr+'|'+hr;
         var pkg=extractPackage(d.mediaCode);
-        if(!pkgMap[k])pkgMap[k]={};
-        pkgMap[k][pkg]=true;
+        if(!pkgMap1[k])pkgMap1[k]={};
+        pkgMap1[k][pkg]=true;
     });
+    // tbspData 내에서 중복 체크
+    var pkgMap2={};
     tbspData.forEach(function(d){
         if(d.type!==type)return;
         var hr=d.hour!==null?d.hour:'unknown';
         var k=d.dateStr+'|'+hr;
         var pkg=extractPackage(d.mediaCode);
-        if(!pkgMap[k])pkgMap[k]={};
-        pkgMap[k][pkg]=true;
+        if(!pkgMap2[k])pkgMap2[k]={};
+        pkgMap2[k][pkg]=true;
     });
     var exclude={};
-    Object.keys(pkgMap).forEach(function(k){
-        if(Object.keys(pkgMap[k]).length>=2)exclude[k]=true;
+    Object.keys(pkgMap1).forEach(function(k){
+        if(Object.keys(pkgMap1[k]).length>=2)exclude[k]=true;
+    });
+    Object.keys(pkgMap2).forEach(function(k){
+        if(Object.keys(pkgMap2[k]).length>=2)exclude[k]=true;
     });
     return exclude;
 }
