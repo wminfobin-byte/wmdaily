@@ -1453,6 +1453,10 @@ function calcSchedule(){
     var dayTypeLabel=weekend?'주말':'평일';
     var avg=getSpecialTimeAvgByTypeByDayType(type,weekend);
     var hk=hour!==null?hour:'unknown',hd=avg[hk]||{};
+    console.log('[DEBUG calcSchedule] type='+type+', day='+day+', hour='+hour+', weekend='+weekend);
+    console.log('[DEBUG calcSchedule] hk='+hk+', avg keys='+JSON.stringify(Object.keys(avg))+', hd='+JSON.stringify(hd));
+    console.log('[DEBUG calcSchedule] allData timeboard count='+allData.filter(function(d){return d.isTimeboard;}).length+', special count='+allData.filter(function(d){return d.isSpecial;}).length);
+    console.log('[DEBUG calcSchedule] tbspData count='+tbspData.length);
     var bd={},tp=0;
     DB_TYPES.forEach(function(dt){
         var dtAvg=hd[dt]||0;
