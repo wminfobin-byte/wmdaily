@@ -462,6 +462,8 @@ let kpiByTab = { main: null, talkis: null }; // cached KPI per tab
 let globalLatestDate = null;  // 업로드된 날짜 중 가장 최근 (전영업일)
 let fileJustUploaded = false; // 파일 업로드 직후에만 true
 let lastUploadType = null;   // 'roster' | 'db' | 'contract' — 마지막 업로드 파일 유형
+let rosterFirstUpload = false; // 해당 명단 파일이 처음 업로드된 건지 여부
+let uploadedRosterNames = new Set(); // 이미 업로드된 명단 파일명 추적
 let lastGroupedMain = null;   // buildDashboard 결과 캐시
 let lastGroupedTalkis = null;
 let lastLatestDate = null;
@@ -1515,6 +1517,8 @@ document.getElementById('fileRoster').addEventListener('change', e => {
     populateFilters();
     fileJustUploaded = true;
     lastUploadType = 'roster';
+    rosterFirstUpload = !uploadedRosterNames.has(file.name);
+    uploadedRosterNames.add(file.name);
     await tryBuildTab4();
   }, 'progressRoster');
 });
@@ -2223,11 +2227,12 @@ async function tryBuildTab4() {
         return { db, ct, rate: db > 0 ? ct / db : 0 };
       }
       // 그룹 변동 구분: 하향자=최상단(-1), 일반=중간(0), 상향자=최하단(1)
-      // 명단만 올렸을 때만 위치 고정, DB/계약수 올린 후에는 순위대로 정렬
+      // 명단 첫 업로드 + 누구든 DB 1개 이상 없을 때만 위치 고정
       const grpRank = { 'W그룹': 3, 'E그룹': 2, 'N그룹': 1 };
-      const pinGroupChange = lastUploadType === 'roster';
+      const hasAnyDb = persons.some(p => p.cumDbAll > 0);
+      const pinGroupChange = lastUploadType === 'roster' && rosterFirstUpload && !hasAnyDb;
       function groupChangeOrder(p) {
-        if (!pinGroupChange) return 0; // DB/계약수 올린 후에는 위치 고정 안함
+        if (!pinGroupChange) return 0; // 데이터 있으면 순위대로 정렬
         if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
           if (grpRank[p.group] < grpRank[p.prevGroup]) return -1; // 하향 → 최상단
           if (grpRank[p.group] > grpRank[p.prevGroup]) return 1;  // 상향 → 최하단
@@ -2627,16 +2632,7 @@ function buildAccSheet(groupedData, dateLabel) {
       const ct = Math.max(0, p.cumContractNonIN - p.holActualContract);
       return { db, ct, rate: db > 0 ? ct / db : 0 };
     }
-    function groupChangeOrder(p) {
-      if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
-        if (grpRank[p.group] < grpRank[p.prevGroup]) return -1;
-        if (grpRank[p.group] > grpRank[p.prevGroup]) return 1;
-      }
-      return 0;
-    }
     persons.sort((a, b) => {
-      const orderA = groupChangeOrder(a), orderB = groupChangeOrder(b);
-      if (orderA !== orderB) return orderA - orderB;
       const pa = pureValues(a), pb = pureValues(b);
       const bottomA = pa.db < 100 ? 1 : 0, bottomB = pb.db < 100 ? 1 : 0;
       if (bottomA !== bottomB) return bottomA - bottomB;
