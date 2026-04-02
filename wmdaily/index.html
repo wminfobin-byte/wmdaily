@@ -575,7 +575,6 @@ function applyAuthUI() {
   document.getElementById('btnAdmin').textContent = '데이터 업로드';
   document.getElementById('btnAccSave').style.display = '';
   restoreSyncTime();
-  startAutoSync();
 }
 
 function openModal() {
@@ -3047,13 +3046,6 @@ function restoreSyncTime() {
   }
 }
 
-let autoSyncInterval = null;
-function startAutoSync() {
-  if (autoSyncInterval) return;
-  autoSyncInterval = setInterval(() => {
-    if (authPassed && getGhToken()) syncToGitHub(true).catch(() => {});
-  }, 60000);
-}
 
 async function loadSharedData() {
   try {
