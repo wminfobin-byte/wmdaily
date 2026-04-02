@@ -45,10 +45,17 @@
   .badge-accumulate { background: #e8f0fe; color: #1a73e8; border: 1px solid #1a73e844; }
   .upload-box .status { font-size: 11px; color: #34a853; font-weight: 600; margin-top: 4px; display: none; }
   .upload-box.loaded .status { display: block; }
-  .upload-box .progress-bar { width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; margin-top: 8px; overflow: hidden; display: none; }
+  .upload-box .progress-bar { width: 100%; height: 6px; background: #e8eaed; border-radius: 3px; margin-top: 8px; overflow: hidden; display: none; position: relative; }
   .upload-box .progress-bar.active { display: block; }
-  .upload-box .progress-fill { height: 100%; background: #1a73e8; border-radius: 2px; transition: width 0.3s ease; width: 0%; }
-  .upload-box .progress-fill.done { background: #34a853; }
+  .upload-box .progress-fill { height: 100%; background: linear-gradient(90deg, #4285f4, #1a73e8); border-radius: 3px; transition: width 0.4s cubic-bezier(.4,0,.2,1); width: 0%; position: relative; }
+  .upload-box .progress-fill.done { background: linear-gradient(90deg, #34a853, #1e8e3e); }
+  .upload-box .progress-fill:not(.done)::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent); animation: progressShimmer 1.5s infinite; }
+  @keyframes progressShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+  .upload-box .progress-label { display: none; margin-top: 4px; font-size: 11px; color: #5f6368; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+  .upload-box .progress-bar.active + .progress-label { display: block; }
+  .upload-box .progress-label .pct { color: #1a73e8; font-weight: 700; }
+  .upload-box .progress-label .pct.done { color: #1e8e3e; }
+  .upload-box .progress-label .step { color: #80868b; margin-left: 4px; }
   .upload-box .btn-clear { position: absolute; top: 6px; right: 6px; background: none; border: none; color: #ccc; font-size: 14px; cursor: pointer; padding: 2px 5px; border-radius: 4px; z-index: 2; display: none; }
   .upload-box.loaded .btn-clear { display: block; }
   .upload-box .btn-clear:hover { color: #ea4335; background: #fde7e9; }
@@ -269,6 +276,7 @@
           <div class="status" id="rosterStatus"></div>
           <div class="file-list" id="rosterFileList"></div>
           <div class="progress-bar" id="progressRoster"><div class="progress-fill"></div></div>
+          <div class="progress-label" id="progressRosterLabel"></div>
         </div>
         <input type="file" accept=".xlsx,.xls" id="fileRoster">
       </div>
@@ -280,6 +288,7 @@
           <div class="status" id="dbStatus"></div>
           <div class="file-list" id="dbFileList"></div>
           <div class="progress-bar" id="progressDb"><div class="progress-fill"></div></div>
+          <div class="progress-label" id="progressDbLabel"></div>
         </div>
         <input type="file" accept=".xlsx,.xls" id="fileDb" multiple>
       </div>
@@ -291,6 +300,7 @@
           <div class="status" id="contractStatus"></div>
           <div class="file-list" id="contractFileList"></div>
           <div class="progress-bar" id="progressContract"><div class="progress-fill"></div></div>
+          <div class="progress-label" id="progressContractLabel"></div>
         </div>
         <input type="file" accept=".xlsx,.xls" id="fileContract">
       </div>
@@ -698,19 +708,26 @@ function displayKpi(tab) {
 // ══════════════════════════════════════════════
 // ── File Read ──
 // ══════════════════════════════════════════════
+const PROGRESS_STEPS = { 0: '준비 중...', 10: '파일 읽는 중...', 60: '파일 읽는 중...', 70: '엑셀 파싱 중...', 85: '데이터 변환 중...', 95: '저장 중...', 100: '완료!' };
 function setProgress(barId, pct, done) {
   const bar = document.getElementById(barId);
   const fill = bar.querySelector('.progress-fill');
+  const label = document.getElementById(barId + 'Label');
   bar.classList.add('active');
   fill.style.width = pct + '%';
-  if (done) fill.classList.add('done');
-  else fill.classList.remove('done');
+  if (done) fill.classList.add('done'); else fill.classList.remove('done');
+  if (label) {
+    const step = PROGRESS_STEPS[Object.keys(PROGRESS_STEPS).reverse().find(k => pct >= +k)] || '';
+    label.innerHTML = `<span class="pct${done ? ' done' : ''}">${pct}%</span><span class="step">${done ? '완료!' : step}</span>`;
+  }
 }
 function resetProgress(barId) {
   const bar = document.getElementById(barId);
   bar.classList.remove('active');
   bar.querySelector('.progress-fill').style.width = '0%';
   bar.querySelector('.progress-fill').classList.remove('done');
+  const label = document.getElementById(barId + 'Label');
+  if (label) { label.innerHTML = ''; }
 }
 
 function readExcel(file, callback, progressBarId) {
@@ -730,7 +747,7 @@ function readExcel(file, callback, progressBarId) {
       const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
       if (progressBarId) setProgress(progressBarId, 95, false);
       callback(raw.slice(1), e.target.result);
-      if (progressBarId) setProgress(progressBarId, 100, true);
+      if (progressBarId) { setProgress(progressBarId, 100, true); setTimeout(() => resetProgress(progressBarId), 2000); }
     } catch (err) {
       showStatus(`파일 읽기 오류: ${err.message}`, 'error');
       if (progressBarId) resetProgress(progressBarId);
