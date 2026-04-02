@@ -2679,7 +2679,12 @@ function buildAccSheet(groupedData, dateLabel) {
         pureDb, pureCt, rateVal(pureCt, Math.max(1, pureDb)),
         rankChg, ''];
       rows.push(row);
-      rowMeta.push({ type: 'data', groupBg });
+      let groupChgType = null;
+      if (p.prevGroup && p.prevGroup !== p.group && grpRank[p.group] && grpRank[p.prevGroup]) {
+        if (grpRank[p.group] < grpRank[p.prevGroup]) groupChgType = 'demoted';
+        else if (grpRank[p.group] > grpRank[p.prevGroup]) groupChgType = 'promoted';
+      }
+      rowMeta.push({ type: 'data', groupBg, groupChgType });
 
       for (const k of Object.keys(totals)) totals[k] += p[k] || 0;
     });
@@ -2738,7 +2743,7 @@ function buildAccSheet(groupedData, dateLabel) {
         cell.s = { fill: { fgColor: { rgb: 'EEF1F5' } }, font: { bold: true, color: { rgb: '333333' }, sz: 11 }, alignment: { horizontal: 'center', vertical: 'center' }, border: thickTopBorder };
         if (rateCols.has(c)) cell.s.font = { bold: true, color: { rgb: '1A73E8' }, sz: 11 };
       } else {
-        const bg = (r % 2 === 0) ? 'FAFBFC' : 'FFFFFF';
+        const bg = meta.groupChgType === 'demoted' ? 'DDD9C4' : meta.groupChgType === 'promoted' ? 'C5D9F1' : (r % 2 === 0) ? 'FAFBFC' : 'FFFFFF';
         cell.s = { fill: { fgColor: { rgb: bg } }, font: { color: { rgb: '333333' }, sz: 10 }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
         if (c === 4) cell.s.font = { bold: true, color: { rgb: '333333' }, sz: 10 };
         if (rateCols.has(c)) cell.s.font = { bold: true, color: { rgb: '1A73E8' }, sz: 10 };
