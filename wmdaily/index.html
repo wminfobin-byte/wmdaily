@@ -3051,7 +3051,7 @@ let autoSyncInterval = null;
 function startAutoSync() {
   if (autoSyncInterval) return;
   autoSyncInterval = setInterval(() => {
-    if (authPassed && getGhToken()) syncToGitHub(false).catch(() => {});
+    if (authPassed && getGhToken()) syncToGitHub(true).catch(() => {});
   }, 60000);
 }
 
