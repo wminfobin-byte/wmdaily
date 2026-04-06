@@ -3198,10 +3198,88 @@ function setupFavicon() {
   img.src = document.querySelector('.header-left img').src;
 }
 
+// ── V6vi25 제외 마이그레이션 (일회성) ──
+async function migrateV6vi25() {
+  const MIGKEY = 'v6vi25_migrated';
+  if (localStorage.getItem(MIGKEY)) return;
+  try {
+    const db = await openDB();
+    // archive에서 고객관리 파일들 찾기
+    const txA = db.transaction(STORE_ARCHIVE, 'readonly');
+    const archiveFiles = await new Promise((resolve, reject) => {
+      const result = [];
+      const req = txA.objectStore(STORE_ARCHIVE).openCursor();
+      req.onsuccess = e => {
+        const c = e.target.result;
+        if (c) { if (c.key.includes('고객관리')) result.push({ name: c.key, data: c.value.data }); c.continue(); }
+        else resolve(result);
+      };
+      req.onerror = () => reject(req.error);
+    });
+    if (archiveFiles.length === 0) { db.close(); localStorage.setItem(MIGKEY, '1'); return; }
+
+    // 각 파일에서 V6vi25 + 3/30~4/3 해당 건수를 날짜/이름별로 집계
+    const subtract = {}; // { date: { name: { total, nonIN, inOnly } } }
+    for (const f of archiveFiles) {
+      const wb = XLSX.read(f.data, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).slice(1);
+      for (const row of rows) {
+        const name = String(row[DB_COL.obName] || '').trim();
+        if (!name) continue;
+        const distDate = datePart(row[DB_COL.distributeDate]);
+        if (!distDate || distDate < '2026-03-30' || distDate > '2026-04-03') continue;
+        const mediaCode = String(row[DB_COL.mediaCode] || '').trim();
+        if (!mediaCode.includes('V6vi25')) continue;
+        const dbInfoVal = String(row[DB_COL.dbInfo] || '').trim();
+        if (dbInfoVal.includes('재콜')) continue; // 재콜은 이미 제외되어 있음
+        const isIN = mediaCode === ''; // V6vi25 포함이면 항상 false
+        if (!subtract[distDate]) subtract[distDate] = {};
+        if (!subtract[distDate][name]) subtract[distDate][name] = { total: 0, nonIN: 0, inOnly: 0 };
+        subtract[distDate][name].total++;
+        if (isIN) subtract[distDate][name].inOnly++;
+        else subtract[distDate][name].nonIN++;
+      }
+    }
+
+    const dates = Object.keys(subtract);
+    if (dates.length === 0) { db.close(); localStorage.setItem(MIGKEY, '1'); return; }
+
+    // IDB dates 스토어에서 차감
+    const tx = db.transaction(STORE_DATES, 'readwrite');
+    const dateStore = tx.objectStore(STORE_DATES);
+    for (const date of dates) {
+      const existing = await new Promise(resolve => {
+        const req = dateStore.get(date);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      });
+      if (!existing) continue;
+      for (const [name, counts] of Object.entries(subtract[date])) {
+        if (existing.persons[name]) {
+          existing.persons[name].total -= counts.total;
+          existing.persons[name].nonIN -= counts.nonIN;
+          existing.persons[name].inOnly -= counts.inOnly;
+          if (existing.persons[name].total <= 0) delete existing.persons[name];
+        }
+      }
+      if (Object.keys(existing.persons).length === 0) dateStore.delete(date);
+      else dateStore.put(existing, date);
+    }
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    localStorage.setItem(MIGKEY, '1');
+    console.log('V6vi25 마이그레이션 완료:', subtract);
+  } catch (err) {
+    console.error('V6vi25 마이그레이션 오류:', err);
+  }
+}
+
 // ── Init ──
 (async function init() {
   setupFavicon();
   if (authPassed) applyAuthUI();
+  await migrateV6vi25();
   refreshStorageDisplay().catch(() => {});
   cleanupAccumulatedByMonth();
   refreshAccDisplay();
