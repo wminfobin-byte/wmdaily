@@ -2295,13 +2295,17 @@ async function tryBuildTab4() {
         }
         return 0; // 변동 없음 → 중간
       }
+      // 월초(1~5일)에는 DB 100 미만 하단 배치 비활성화
+      const isEarlyMonth = latestDate && parseInt(latestDate.slice(-2), 10) <= 5;
       persons.sort((a, b) => {
         const orderA = groupChangeOrder(a), orderB = groupChangeOrder(b);
         if (orderA !== orderB) return orderA - orderB;
         const pa = pureValues(a), pb = pureValues(b);
-        const bottomA = pa.db < 100 ? 1 : 0;
-        const bottomB = pb.db < 100 ? 1 : 0;
-        if (bottomA !== bottomB) return bottomA - bottomB;
+        if (!isEarlyMonth) {
+          const bottomA = pa.db < 100 ? 1 : 0;
+          const bottomB = pb.db < 100 ? 1 : 0;
+          if (bottomA !== bottomB) return bottomA - bottomB;
+        }
         if (pa.rate !== pb.rate) return pb.rate - pa.rate;
         return pb.ct - pa.ct;
       });
@@ -2319,9 +2323,11 @@ async function tryBuildTab4() {
       }
       const prevSorted = [...persons].sort((a, b) => {
         const pa = prevPureValues(a), pb = prevPureValues(b);
-        const bottomA = pa.db < 100 ? 1 : 0;
-        const bottomB = pb.db < 100 ? 1 : 0;
-        if (bottomA !== bottomB) return bottomA - bottomB;
+        if (!isEarlyMonth) {
+          const bottomA = pa.db < 100 ? 1 : 0;
+          const bottomB = pb.db < 100 ? 1 : 0;
+          if (bottomA !== bottomB) return bottomA - bottomB;
+        }
         if (pa.rate !== pb.rate) return pb.rate - pa.rate;
         return pb.ct - pa.ct;
       });
@@ -2688,10 +2694,13 @@ function buildAccSheet(groupedData, dateLabel) {
       const ct = Math.max(0, p.cumContractNonIN - p.holActualContract);
       return { db, ct, rate: db > 0 ? ct / db : 0 };
     }
+    const isEarlyMonth = lastLatestDate && parseInt(lastLatestDate.slice(-2), 10) <= 5;
     persons.sort((a, b) => {
       const pa = pureValues(a), pb = pureValues(b);
-      const bottomA = pa.db < 100 ? 1 : 0, bottomB = pb.db < 100 ? 1 : 0;
-      if (bottomA !== bottomB) return bottomA - bottomB;
+      if (!isEarlyMonth) {
+        const bottomA = pa.db < 100 ? 1 : 0, bottomB = pb.db < 100 ? 1 : 0;
+        if (bottomA !== bottomB) return bottomA - bottomB;
+      }
       if (pa.rate !== pb.rate) return pb.rate - pa.rate;
       return pb.ct - pa.ct;
     });
@@ -2705,8 +2714,10 @@ function buildAccSheet(groupedData, dateLabel) {
     }
     const prevSorted = [...persons].sort((a, b) => {
       const pa = prevPureValues(a), pb = prevPureValues(b);
-      const bottomA = pa.db < 100 ? 1 : 0, bottomB = pb.db < 100 ? 1 : 0;
-      if (bottomA !== bottomB) return bottomA - bottomB;
+      if (!isEarlyMonth) {
+        const bottomA = pa.db < 100 ? 1 : 0, bottomB = pb.db < 100 ? 1 : 0;
+        if (bottomA !== bottomB) return bottomA - bottomB;
+      }
       if (pa.rate !== pb.rate) return pb.rate - pa.rate;
       return pb.ct - pa.ct;
     });
