@@ -3497,7 +3497,7 @@ async function loadSharedData() {
       document.getElementById('rosterStatus').textContent = `${totalNames}명 (공유 데이터)`;
     }
 
-    // ── 4단계: 계약 복원 (70~80%) ──
+    // ── 4단계: 계약 복원 (70~75%) ──
     setProgress(70, '계약 데이터 처리 중...');
     await new Promise(r => setTimeout(r, 0));
     if (shared.contract) {
@@ -3505,7 +3505,6 @@ async function loadSharedData() {
       for (const [monthKey, rows] of Object.entries(shared.contract)) {
         contractByMonth[monthKey] = rows;
       }
-      await saveContractToDB();
       contractData = mergeAllContracts();
       if (contractData) {
         document.getElementById('uploadContract').classList.add('loaded');
@@ -3513,18 +3512,6 @@ async function loadSharedData() {
         document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터, ${months.join(', ')})`;
       }
     }
-
-    // ── 5단계: IndexedDB 저장 (80~90%) ──
-    setProgress(80, 'DB 저장 중...');
-    await new Promise(r => setTimeout(r, 0));
-    const db = await openDB();
-    const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
-    const dateStore = tx.objectStore(STORE_DATES);
-    const keyStore = tx.objectStore(STORE_KEYS);
-    for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
-    for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
-    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
-    db.close();
 
     // 누적 저장 데이터 복원
     if (shared.accumulated) {
@@ -3534,12 +3521,30 @@ async function loadSharedData() {
       refreshAccDisplay();
     }
 
-    // ── 6단계: 대시보드 빌드 (90~100%) ──
-    setProgress(90, '대시보드 생성 중...');
+    // ── 5단계: 대시보드 빌드 (75~90%) ──
+    setProgress(75, '대시보드 생성 중...');
     await new Promise(r => setTimeout(r, 0));
     if (rosterMap && contractData) {
       await tryBuildTab4();
     }
+    setProgress(90, '대시보드 완료');
+
+    // ── 6단계: IndexedDB 백그라운드 저장 (90~100%) ──
+    // 대시보드를 먼저 보여주고 DB 저장은 뒤에서 처리
+    setProgress(92, '데이터 저장 중 (백그라운드)...');
+    await new Promise(r => setTimeout(r, 0));
+    try {
+      await saveContractToDB();
+      const db = await openDB();
+      // dates와 keyMeta를 각각 하나의 벌크 객체로 저장 (개별 put 대신)
+      const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+      const dateStore = tx.objectStore(STORE_DATES);
+      const keyStore = tx.objectStore(STORE_KEYS);
+      for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
+      for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
+      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+      db.close();
+    } catch(e) { console.warn('백그라운드 DB 저장 오류:', e); }
     setProgress(100, '완료');
 
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
