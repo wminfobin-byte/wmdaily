@@ -3221,6 +3221,21 @@ function saveAccExcelLocal(tab) {
   localStorage.setItem(getAccStorageKey(tab, dateKey), JSON.stringify(data));
 }
 
+function datesToRanges(dates) {
+  if (dates.length === 0) return '';
+  const sorted = [...dates].sort();
+  const ranges = [];
+  let start = sorted[0], prev = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    const prevD = new Date(prev), currD = new Date(sorted[i]);
+    const diffDays = (currD - prevD) / 86400000;
+    if (diffDays <= 1) { prev = sorted[i]; }
+    else { ranges.push(start === prev ? start : `${start} ~ ${prev}`); start = sorted[i]; prev = sorted[i]; }
+  }
+  ranges.push(start === prev ? start : `${start} ~ ${prev}`);
+  return ranges.join(', ');
+}
+
 function refreshAccDisplay() {
   const mainDates = getAccSavedDates('main');
   const talkisDates = getAccSavedDates('talkis');
@@ -3234,9 +3249,9 @@ function refreshAccDisplay() {
   }
   if (listEl) {
     const lines = [];
-    if (mainDates.length > 0) lines.push('뇌새김: ' + mainDates.join(', '));
-    if (talkisDates.length > 0) lines.push('톡이즈: ' + talkisDates.join(', '));
-    listEl.textContent = lines.join(' | ');
+    if (mainDates.length > 0) lines.push(`뇌새김: ${datesToRanges(mainDates)}`);
+    if (talkisDates.length > 0) lines.push(`톡이즈: ${datesToRanges(talkisDates)}`);
+    listEl.innerHTML = lines.join('<br>');
   }
 }
 
