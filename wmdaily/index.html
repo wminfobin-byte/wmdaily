@@ -76,7 +76,7 @@
   .upload-box .btn-clear:hover { color: #ea4335; background: #fde7e9; }
 
   /* File list inside upload box */
-  .file-list { margin-top: 8px; text-align: left; max-height: 120px; overflow-y: auto; position: relative; z-index: 2; }
+  .file-list { margin-top: 8px; text-align: left; max-height: 63px; overflow-y: auto; position: relative; z-index: 2; }
   .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
   .file-item { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; color: #333; }
   .file-item .file-icon { color: #34a853; font-size: 13px; }
@@ -1485,8 +1485,10 @@ function renderFileList(type, files) {
   const el = document.getElementById(listId);
   if (!el || !files || files.length === 0) { if (el) el.innerHTML = ''; return; }
   const delFn = type === 'db' ? 'deleteDbFileEntry' : 'deleteFileEntry';
-  el.innerHTML = files.map((f, i) => {
-    const delBtn = `<button class="btn-file-del" onclick="${delFn}('${type}', ${i})" title="이 파일 삭제">✕</button>`;
+  // 최신 업로드가 위로 오도록 역순 표시
+  const reversed = files.map((f, i) => ({ f, origIdx: i })).reverse();
+  el.innerHTML = reversed.map(({ f, origIdx }) => {
+    const delBtn = `<button class="btn-file-del" onclick="${delFn}('${type}', ${origIdx})" title="이 파일 삭제">✕</button>`;
     return `<div class="file-item"><span class="file-icon">✓</span><span class="file-name">${f.name}</span><span class="file-count">${Number(f.count).toLocaleString()}건</span>${delBtn}</div>`;
   }).join('');
 }
