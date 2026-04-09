@@ -3761,12 +3761,17 @@ async function loadSharedData() {
       db.close();
     } catch(e) { console.warn('IndexedDB 저장 오류:', e); }
 
-    // ── 6단계: 대시보드 빌드 (85~100%) ──
+    // ── 6단계: 대시보드 빌드 (85~95%) ──
     setProgress(85, '대시보드 생성 중...');
     await new Promise(r => setTimeout(r, 0));
     if (rosterMap && contractData) {
       await tryBuildTab4();
     }
+
+    // ── 7단계: 빠진 날짜 누적 데이터 보충 (95~100%) ──
+    setProgress(95, '누적 데이터 보충 중...');
+    await new Promise(r => setTimeout(r, 0));
+    try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
     setProgress(100, '완료');
 
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
