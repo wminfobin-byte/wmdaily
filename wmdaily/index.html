@@ -3937,7 +3937,9 @@ async function migrateV6vi25() {
   await loadSavedFiles().catch(() => {});
 
   if (rosterMap && contractData) {
-    // 로컬에서 로드 성공
+    // 로컬에서 로드 성공 → 빠진 날짜 누적 데이터 보충
+    showLoading(90, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '누적 데이터 확인 중...');
+    try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
     showLoading(100, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '완료');
     hideLoading();
   } else {
