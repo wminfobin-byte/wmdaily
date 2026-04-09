@@ -2892,11 +2892,13 @@ async function downloadExcel(tab) {
     const zip = await JSZip.loadAsync(wbBuf);
     for (const path of Object.keys(zip.files)) {
       if (path.startsWith('xl/worksheets/sheet') && path.endsWith('.xml')) {
-        const xml = await zip.file(path).async('string');
-        zip.file(path, xml.replace(/<sheetView /g, '<sheetView showGridLines="0" '));
+        let xml = await zip.file(path).async('string');
+        // <sheetView ...> 또는 <sheetView> 모두 처리
+        xml = xml.replace(/<sheetView(?=[\s>])/g, '<sheetView showGridLines="0"');
+        zip.file(path, xml);
       }
     }
-    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 }, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = fileName;
