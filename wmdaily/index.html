@@ -2942,6 +2942,15 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
   const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
   const talkisGroups = ['톡이즈'];
 
+  // 전월 명단 (그룹 변동 비교용)
+  let prevMonthRoster = null;
+  const months = Object.keys(rosterByMonth).sort();
+  const curMonth = targetDate.slice(0, 7);
+  const prevMonths = months.filter(m => m < curMonth);
+  if (prevMonths.length > 0) {
+    prevMonthRoster = rosterByMonth[prevMonths[prevMonths.length - 1]];
+  }
+
   // 개인별 통계 계산
   const personStats = new Map();
   const mkStats = () => ({
@@ -3036,12 +3045,14 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
   activeRoster.forEach((info, name) => {
     const stats = personStats.get(name) || mkStats();
     const g = info.group;
+    const prevInfo = prevMonthRoster ? prevMonthRoster.get(name) : null;
+    const prevGroup = prevInfo ? prevInfo.group : null;
     if (talkisGroups.includes(g)) {
       if (!groupedTalkis.has(g)) groupedTalkis.set(g, []);
-      groupedTalkis.get(g).push({ name, ...info, ...stats });
+      groupedTalkis.get(g).push({ name, ...info, ...stats, prevGroup });
     } else {
       if (!groupedMain.has(g)) groupedMain.set(g, []);
-      groupedMain.get(g).push({ name, ...info, ...stats });
+      groupedMain.get(g).push({ name, ...info, ...stats, prevGroup });
     }
   });
 
@@ -3055,7 +3066,7 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
   localStorage.setItem(getAccStorageKey('talkis', targetDate), JSON.stringify(talkisData));
 }
 
-async function buildAllDateAccumulated() {
+async function buildAllDateAccumulated(force) {
   if (!rosterMap || !contractData) { console.log('[buildAllDate] skip: no roster/contract'); return 0; }
 
   const acc = await loadAccumulated();
@@ -3085,7 +3096,7 @@ async function buildAllDateAccumulated() {
   let newCount = 0;
   for (const targetDate of allDates) {
     if (!datesToBuild.has(targetDate)) continue;
-    if (localStorage.getItem(getAccStorageKey('main', targetDate)) &&
+    if (!force && localStorage.getItem(getAccStorageKey('main', targetDate)) &&
         localStorage.getItem(getAccStorageKey('talkis', targetDate))) {
       console.log('[buildAllDate] skip (exists):', targetDate);
       continue;
@@ -3390,7 +3401,7 @@ async function saveAccAll() {
 
   // 방법1: 빠진 날짜 자동 보충
   btn.innerHTML = syncIcon + ' <span class="btn-label-text">누적 데이터 생성 중...</span>';
-  const newCount = await buildAllDateAccumulated();
+  const newCount = await buildAllDateAccumulated(true);
 
   refreshAccDisplay();
 
