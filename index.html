@@ -2938,7 +2938,8 @@ function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
 // 단일 날짜에 대한 누적 KPI 계산 + 저장
 function buildSingleDateAcc(targetDate, acc, allDates) {
   const activeRoster = getRosterForDate(targetDate);
-  const cumDates = allDates.filter(d => d <= targetDate);
+  const monthStart = targetDate.slice(0, 8) + '01';
+  const cumDates = allDates.filter(d => d >= monthStart && d <= targetDate);
   const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
   const talkisGroups = ['톡이즈'];
 
@@ -3001,7 +3002,6 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
     }
     if (appDateStr) {
       if (appDateStr > targetDate) return;
-      const monthStart = targetDate.slice(0, 8) + '01';
       if (appDateStr < monthStart) return;
     }
     // 휴일 계약
