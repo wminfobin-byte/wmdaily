@@ -2686,7 +2686,7 @@ async function tryBuildTab4() {
 
   // 방법2: 대시보드 빌드 시 최근 영업일 데이터 자동 저장
   if (latestDate) {
-    autoSaveAccForDate(latestDate, groupedMain, groupedTalkis);
+    try { autoSaveAccForDate(latestDate, groupedMain, groupedTalkis); } catch(e) { console.warn('autoSaveAcc:', e); }
   }
 }
 
@@ -3745,22 +3745,13 @@ async function loadSharedData() {
       refreshAccDisplay();
     }
 
-    // ── 5단계: 대시보드 빌드 (75~90%) ──
-    setProgress(75, '대시보드 생성 중...');
-    await new Promise(r => setTimeout(r, 0));
-    if (rosterMap && contractData) {
-      await tryBuildTab4();
-    }
-    setProgress(90, '대시보드 완료');
-
-    // ── 6단계: IndexedDB 백그라운드 저장 (90~100%) ──
-    // 대시보드를 먼저 보여주고 DB 저장은 뒤에서 처리
-    setProgress(92, '데이터 저장 중...');
+    // ── 5단계: IndexedDB 저장 (75~85%) ──
+    // tryBuildTab4()가 loadAccumulated()로 IndexedDB를 읽으므로, 대시보드 빌드 전에 저장
+    setProgress(75, '데이터 저장 중...');
     await new Promise(r => setTimeout(r, 0));
     try {
       await saveContractToDB();
       const db = await openDB();
-      // dates와 keyMeta를 각각 하나의 벌크 객체로 저장 (개별 put 대신)
       const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
       const dateStore = tx.objectStore(STORE_DATES);
       const keyStore = tx.objectStore(STORE_KEYS);
@@ -3768,7 +3759,14 @@ async function loadSharedData() {
       for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
       await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
       db.close();
-    } catch(e) { console.warn('백그라운드 DB 저장 오류:', e); }
+    } catch(e) { console.warn('IndexedDB 저장 오류:', e); }
+
+    // ── 6단계: 대시보드 빌드 (85~100%) ──
+    setProgress(85, '대시보드 생성 중...');
+    await new Promise(r => setTimeout(r, 0));
+    if (rosterMap && contractData) {
+      await tryBuildTab4();
+    }
     setProgress(100, '완료');
 
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
@@ -3782,7 +3780,8 @@ async function loadSharedData() {
     }
     showStatus(`공유 데이터를 불러왔습니다. (${exportDate} 기준)`, 'success');
     return true;
-  } catch {
+  } catch(e) {
+    console.error('loadSharedData 오류:', e);
     return false;
   }
 }
