@@ -2935,22 +2935,133 @@ function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
 }
 
 // 방법1: 동기화 시 모든 날짜 자동 빌드 (빠진 날짜 보충)
+// 단일 날짜에 대한 누적 KPI 계산 + 저장
+function buildSingleDateAcc(targetDate, acc, allDates) {
+  const activeRoster = getRosterForDate(targetDate);
+  const cumDates = allDates.filter(d => d <= targetDate);
+  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
+  const talkisGroups = ['톡이즈'];
+
+  // 개인별 통계 계산
+  const personStats = new Map();
+  const mkStats = () => ({
+    todayDb: 0, todayDbNonIN: 0, todayDailyContract: 0, todayActualContract: 0, todayContractNonIN: 0,
+    cumDbNonIN: 0, cumCancelNonIN: 0, cumContractNonIN: 0,
+    cumDbIN: 0, cumCancelIN: 0, cumContractIN: 0,
+    cumContractAll: 0, cumDbAll: 0,
+    holDb: 0, holDailyContract: 0, holActualContract: 0, todayHolContract: 0,
+  });
+  const getStats = (name) => {
+    if (!personStats.has(name)) personStats.set(name, mkStats());
+    return personStats.get(name);
+  };
+
+  // DB 통계
+  for (const date of cumDates) {
+    const dayData = acc.dates[date];
+    if (!dayData) continue;
+    const isLatest = (date === targetDate);
+    const isHol = dayData.isHoliday;
+    for (const [name, counts] of Object.entries(dayData.persons)) {
+      const s = getStats(name);
+      s.cumDbNonIN += counts.nonIN;
+      s.cumDbIN += counts.inOnly;
+      s.cumDbAll += counts.total;
+      if (isHol) s.holDb += counts.total;
+      if (isLatest) { s.todayDb = counts.total; s.todayDbNonIN = counts.nonIN; }
+    }
+  }
+
+  // 계약 통계
+  contractData.forEach(ctRow => {
+    const manager = String(ctRow[CT_COL.manager] || '').trim();
+    if (!manager) return;
+    const custKey = String(ctRow[CT_COL.customerKey] || '').trim();
+    const returnDateVal = ctRow[CT_COL.returnDate];
+    const isCancelled = returnDateVal != null && returnDateVal !== '' && String(returnDateVal).trim() !== '';
+    const appDateStr = datePart(ctRow[CT_COL.applicationDate]);
+    const categoryVal = String(ctRow[CT_COL.category] || '').trim();
+    const isIN = categoryVal === '';
+    const meta = acc.keyMeta[custKey];
+    let is일계약 = false;
+    if (meta) {
+      is일계약 = meta.el === 1 && (appDateStr === meta.d);
+    } else {
+      const dbDateStr = datePart(ctRow[CT_COL.dbDate]);
+      is일계약 = (dbDateStr && appDateStr && dbDateStr === appDateStr);
+    }
+    if (appDateStr) {
+      if (appDateStr > targetDate) return;
+      const monthStart = targetDate.slice(0, 8) + '01';
+      if (appDateStr < monthStart) return;
+    }
+    // 휴일 계약
+    let isHolContract = false;
+    let distDateForHol = '';
+    if (meta) {
+      distDateForHol = meta.d;
+      const distMonth = distDateForHol ? distDateForHol.slice(0, 7) : '';
+      const queryMonth = targetDate.slice(0, 7);
+      isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
+    } else {
+      distDateForHol = datePart(ctRow[CT_COL.distributeDate]) || datePart(ctRow[CT_COL.dbDate]);
+      const distMonth = distDateForHol ? distDateForHol.slice(0, 7) : '';
+      const queryMonth = targetDate.slice(0, 7);
+      isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
+    }
+    const s = getStats(manager);
+    if (!isCancelled) {
+      if (isIN) s.cumContractIN++; else s.cumContractNonIN++;
+      s.cumContractAll++;
+      if (isHolContract) {
+        if (is일계약) s.holDailyContract++;
+        if (!isIN) s.holActualContract++;
+      }
+      if (appDateStr === targetDate) {
+        s.todayActualContract++;
+        if (!isIN) s.todayContractNonIN++;
+        if (is일계약) s.todayDailyContract++;
+      }
+    } else {
+      if (isIN) s.cumCancelIN++; else s.cumCancelNonIN++;
+    }
+  });
+
+  // 그룹핑
+  const groupedMain = new Map();
+  const groupedTalkis = new Map();
+  mainGroups.forEach(g => groupedMain.set(g, []));
+  talkisGroups.forEach(g => groupedTalkis.set(g, []));
+
+  activeRoster.forEach((info, name) => {
+    const stats = personStats.get(name) || mkStats();
+    const g = info.group;
+    if (talkisGroups.includes(g)) {
+      if (!groupedTalkis.has(g)) groupedTalkis.set(g, []);
+      groupedTalkis.get(g).push({ name, ...info, ...stats });
+    } else {
+      if (!groupedMain.has(g)) groupedMain.set(g, []);
+      groupedMain.get(g).push({ name, ...info, ...stats });
+    }
+  });
+
+  // 저장
+  const mainData = serializeGrouped(groupedMain);
+  mainData._dateLabel = targetDate;
+  localStorage.setItem(getAccStorageKey('main', targetDate), JSON.stringify(mainData));
+
+  const talkisData = serializeGrouped(groupedTalkis);
+  talkisData._dateLabel = targetDate;
+  localStorage.setItem(getAccStorageKey('talkis', targetDate), JSON.stringify(talkisData));
+}
+
 async function buildAllDateAccumulated() {
-  if (!rosterMap || !contractData) return 0;
+  if (!rosterMap || !contractData) { console.log('[buildAllDate] skip: no roster/contract'); return 0; }
 
   const acc = await loadAccumulated();
   const allDates = Object.keys(acc.dates).sort();
+  console.log('[buildAllDate] IDB dates:', allDates.length, allDates);
   if (allDates.length === 0) return 0;
-
-  const contractByKey = new Map();
-  contractData.forEach(row => {
-    const key = String(row[CT_COL.customerKey] || '').trim();
-    if (key) contractByKey.set(key, row);
-  });
-
-  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
-  const talkisGroups = ['톡이즈'];
-  let newCount = 0;
 
   // 이전달은 마지막 영업일만 생성 (cleanupAccumulatedByMonth 정책과 동일)
   const today = new Date();
@@ -2964,142 +3075,31 @@ async function buildAllDateAccumulated() {
   const datesToBuild = new Set();
   for (const [month, dates] of Object.entries(byMonth)) {
     if (month >= curMonth) {
-      dates.forEach(d => datesToBuild.add(d)); // 당월: 모든 날짜
+      dates.forEach(d => datesToBuild.add(d));
     } else {
-      datesToBuild.add(dates[dates.length - 1]); // 이전달: 마지막 영업일만
+      datesToBuild.add(dates[dates.length - 1]);
     }
   }
+  console.log('[buildAllDate] datesToBuild:', [...datesToBuild].sort());
 
-  for (let di = 0; di < allDates.length; di++) {
-    const targetDate = allDates[di];
-    // 이전달 중간 날짜는 건너뜀
+  let newCount = 0;
+  for (const targetDate of allDates) {
     if (!datesToBuild.has(targetDate)) continue;
-    // 이미 저장된 날짜는 건너뜀
     if (localStorage.getItem(getAccStorageKey('main', targetDate)) &&
-        localStorage.getItem(getAccStorageKey('talkis', targetDate))) continue;
-
-    // targetDate 기준 명단
-    const activeRoster = getRosterForDate(targetDate);
-    // targetDate까지의 누적 날짜
-    const cumDates = allDates.filter(d => d <= targetDate);
-    const latestDate = targetDate;
-
-    // 개인별 통계 계산
-    const personStats = new Map();
-    function getStats(name) {
-      if (!personStats.has(name)) {
-        personStats.set(name, {
-          todayDb: 0, todayDbNonIN: 0, todayDailyContract: 0, todayActualContract: 0, todayContractNonIN: 0,
-          cumDbNonIN: 0, cumCancelNonIN: 0, cumContractNonIN: 0,
-          cumDbIN: 0, cumCancelIN: 0, cumContractIN: 0,
-          cumContractAll: 0, cumDbAll: 0,
-          holDb: 0, holDailyContract: 0, holActualContract: 0, todayHolContract: 0,
-        });
-      }
-      return personStats.get(name);
+        localStorage.getItem(getAccStorageKey('talkis', targetDate))) {
+      console.log('[buildAllDate] skip (exists):', targetDate);
+      continue;
     }
-
-    // DB 통계
-    for (const date of cumDates) {
-      const dayData = acc.dates[date];
-      if (!dayData) continue;
-      const isLatest = (date === latestDate);
-      const isHol = dayData.isHoliday;
-      for (const [name, counts] of Object.entries(dayData.persons)) {
-        const s = getStats(name);
-        s.cumDbNonIN += counts.nonIN;
-        s.cumDbIN += counts.inOnly;
-        s.cumDbAll += counts.total;
-        if (isHol) s.holDb += counts.total;
-        if (isLatest) { s.todayDb = counts.total; s.todayDbNonIN = counts.nonIN; }
-      }
+    console.log('[buildAllDate] building:', targetDate);
+    try {
+      buildSingleDateAcc(targetDate, acc, allDates);
+      newCount++;
+    } catch(e) {
+      console.error('[buildAllDate] error on', targetDate, e);
     }
-
-    // 계약 통계
-    contractData.forEach(ctRow => {
-      const manager = String(ctRow[CT_COL.manager] || '').trim();
-      if (!manager) return;
-      const custKey = String(ctRow[CT_COL.customerKey] || '').trim();
-      const returnDateVal = ctRow[CT_COL.returnDate];
-      const isCancelled = returnDateVal != null && returnDateVal !== '' && String(returnDateVal).trim() !== '';
-      const appDateStr = datePart(ctRow[CT_COL.applicationDate]);
-      const categoryVal = String(ctRow[CT_COL.category] || '').trim();
-      const isIN = categoryVal === '';
-      const meta = acc.keyMeta[custKey];
-      let is일계약 = false;
-      if (meta) {
-        is일계약 = meta.el === 1 && (appDateStr === meta.d);
-      } else {
-        const dbDateStr = datePart(ctRow[CT_COL.dbDate]);
-        is일계약 = (dbDateStr && appDateStr && dbDateStr === appDateStr);
-      }
-      if (appDateStr) {
-        if (appDateStr > targetDate) return;
-        const monthStart = targetDate.slice(0, 8) + '01';
-        if (appDateStr < monthStart) return;
-      }
-      // 휴일 계약
-      let isHolContract = false;
-      let distDateForHol = '';
-      if (meta) {
-        distDateForHol = meta.d;
-        const distMonth = distDateForHol ? distDateForHol.slice(0, 7) : '';
-        const queryMonth = targetDate.slice(0, 7);
-        isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
-      } else {
-        distDateForHol = datePart(ctRow[CT_COL.distributeDate]) || datePart(ctRow[CT_COL.dbDate]);
-        const distMonth = distDateForHol ? distDateForHol.slice(0, 7) : '';
-        const queryMonth = targetDate.slice(0, 7);
-        isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
-      }
-      const s = getStats(manager);
-      if (!isCancelled) {
-        if (isIN) s.cumContractIN++; else s.cumContractNonIN++;
-        s.cumContractAll++;
-        if (isHolContract) {
-          if (is일계약) s.holDailyContract++;
-          if (!isIN) s.holActualContract++;
-        }
-        if (appDateStr === latestDate) {
-          s.todayActualContract++;
-          if (!isIN) s.todayContractNonIN++;
-          if (is일계약) s.todayDailyContract++;
-        }
-      } else {
-        if (isIN) s.cumCancelIN++; else s.cumCancelNonIN++;
-      }
-    });
-
-    // 그룹핑
-    const groupedMain = new Map();
-    const groupedTalkis = new Map();
-    mainGroups.forEach(g => groupedMain.set(g, []));
-    talkisGroups.forEach(g => groupedTalkis.set(g, []));
-
-    activeRoster.forEach((info, name) => {
-      const stats = personStats.get(name) || getStats(name);
-      const g = info.group;
-      if (talkisGroups.includes(g)) {
-        if (!groupedTalkis.has(g)) groupedTalkis.set(g, []);
-        groupedTalkis.get(g).push({ name, ...info, ...stats });
-      } else {
-        if (!groupedMain.has(g)) groupedMain.set(g, []);
-        groupedMain.get(g).push({ name, ...info, ...stats });
-      }
-    });
-
-    // 저장
-    const mainData = serializeGrouped(groupedMain);
-    mainData._dateLabel = targetDate;
-    localStorage.setItem(getAccStorageKey('main', targetDate), JSON.stringify(mainData));
-
-    const talkisData = serializeGrouped(groupedTalkis);
-    talkisData._dateLabel = targetDate;
-    localStorage.setItem(getAccStorageKey('talkis', targetDate), JSON.stringify(talkisData));
-
-    newCount++;
   }
 
+  console.log('[buildAllDate] done, newCount:', newCount);
   refreshAccDisplay();
   return newCount;
 }
