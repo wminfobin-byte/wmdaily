@@ -3612,10 +3612,14 @@ function setupFavicon() {
   img.src = document.querySelector('.header-left img').src;
 }
 
-// ── V6vi25 제외 마이그레이션 (일회성) ──
+// ── V6vi25 역마이그레이션: 이전 마이그레이션이 IDB에서 차감한 값을 복원 ──
+// 업로드 시 제외 로직(line 1115)이 이미 V6vi25를 걸러내므로, IDB 차감은 이중 제외를 유발함
 async function migrateV6vi25() {
   const MIGKEY = 'v6vi25_migrated';
-  if (localStorage.getItem(MIGKEY)) return;
+  const REVERT_KEY = 'v6vi25_revert_done';
+  if (localStorage.getItem(REVERT_KEY)) return;
+  // 이전 마이그레이션이 실행된 적 없으면 복원할 것도 없음
+  if (!localStorage.getItem(MIGKEY)) { localStorage.setItem(REVERT_KEY, '1'); return; }
   try {
     const db = await openDB();
     // archive에서 고객관리 파일들 찾기
@@ -3659,7 +3663,7 @@ async function migrateV6vi25() {
     const dates = Object.keys(subtract);
     if (dates.length === 0) { db.close(); localStorage.setItem(MIGKEY, '1'); return; }
 
-    // IDB dates 스토어에서 차감
+    // IDB dates 스토어에서 복원 (이전 마이그레이션의 차감을 되돌림)
     const tx = db.transaction(STORE_DATES, 'readwrite');
     const dateStore = tx.objectStore(STORE_DATES);
     for (const date of dates) {
@@ -3670,22 +3674,19 @@ async function migrateV6vi25() {
       });
       if (!existing) continue;
       for (const [name, counts] of Object.entries(subtract[date])) {
-        if (existing.persons[name]) {
-          existing.persons[name].total -= counts.total;
-          existing.persons[name].nonIN -= counts.nonIN;
-          existing.persons[name].inOnly -= counts.inOnly;
-          if (existing.persons[name].total <= 0) delete existing.persons[name];
-        }
+        if (!existing.persons[name]) existing.persons[name] = { total: 0, nonIN: 0, inOnly: 0 };
+        existing.persons[name].total += counts.total;
+        existing.persons[name].nonIN += counts.nonIN;
+        existing.persons[name].inOnly += counts.inOnly;
       }
-      if (Object.keys(existing.persons).length === 0) dateStore.delete(date);
-      else dateStore.put(existing, date);
+      dateStore.put(existing, date);
     }
     await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
     db.close();
-    localStorage.setItem(MIGKEY, '1');
-    console.log('V6vi25 마이그레이션 완료:', subtract);
+    localStorage.setItem(REVERT_KEY, '1');
+    console.log('V6vi25 역마이그레이션 완료 (이중 제외 복원):', subtract);
   } catch (err) {
-    console.error('V6vi25 마이그레이션 오류:', err);
+    console.error('V6vi25 역마이그레이션 오류:', err);
   }
 }
 
