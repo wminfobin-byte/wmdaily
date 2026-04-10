@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'Segoe UI', 'Malgun Gothic', sans-serif; background: #f0f2f5; color: #333; }
@@ -1410,11 +1411,8 @@ async function toggleArchiveList() {
     } else {
       // 비로그인 사용자: GitHub 공유 데이터에서 읽기
       try {
-        const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${GH_FILE}?t=${Date.now()}`);
-        if (res.ok) {
-          const shared = await res.json();
-          items = shared.archiveMeta || [];
-        }
+        const shared = await fetchRemoteData();
+        if (shared) items = shared.archiveMeta || [];
       } catch {}
     }
     if (items.length === 0) {
@@ -3505,6 +3503,57 @@ function saveTokenAndSync() {
 }
 
 // includeAccumulated: true면 누적 데이터도 포함 (saveAccAll에서 호출 시)
+// ── 원격 data.json 다운로드 + 압축 자동 감지 ──
+async function fetchRemoteData() {
+  try {
+    const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/${GH_FILE}?t=${Date.now()}`);
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let jsonText;
+    // gzip 매직 바이트 감지 (0x1f 0x8b)
+    if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      jsonText = pako.ungzip(bytes, { to: 'string' });
+    } else {
+      jsonText = new TextDecoder().decode(bytes);
+    }
+    return JSON.parse(jsonText);
+  } catch (e) {
+    console.warn('fetchRemoteData 오류:', e);
+    return null;
+  }
+}
+
+// ── 로컬 데이터와 원격 데이터 병합 (로컬 우선) ──
+function mergeSharedData(remote, local) {
+  const merged = { version: 1, exportedAt: local.exportedAt };
+
+  // dates: 날짜별 DB 데이터 — 합집합, 같은 키는 로컬 우선
+  merged.dates = Object.assign({}, remote.dates || {}, local.dates || {});
+
+  // keyMeta: 고객키 메타 — 합집합, 같은 키는 로컬 우선
+  merged.keyMeta = Object.assign({}, remote.keyMeta || {}, local.keyMeta || {});
+
+  // roster: 월별 명단 — 합집합, 같은 월은 로컬 우선
+  merged.roster = Object.assign({}, remote.roster || {}, local.roster || {});
+
+  // contract: 월별 계약 — 합집합, 같은 월은 로컬 우선
+  merged.contract = Object.assign({}, remote.contract || {}, local.contract || {});
+
+  // archiveMeta: 이름 기준 합집합
+  const archiveMap = new Map();
+  (remote.archiveMeta || []).forEach(a => archiveMap.set(a.name, a));
+  (local.archiveMeta || []).forEach(a => archiveMap.set(a.name, a));
+  merged.archiveMeta = [...archiveMap.values()];
+
+  // accumulated: 합집합, 같은 키는 로컬 우선
+  if (remote.accumulated || local.accumulated) {
+    merged.accumulated = Object.assign({}, remote.accumulated || {}, local.accumulated || {});
+  }
+
+  return merged;
+}
+
 async function syncToGitHub(includeAccumulated) {
   const token = getGhToken();
   if (!token) {
@@ -3516,7 +3565,7 @@ async function syncToGitHub(includeAccumulated) {
   }
 
   try {
-    // 1. IndexedDB에서 전체 데이터 읽기
+    // 1. IndexedDB에서 로컬 데이터 읽기
     const db = await openDB();
     const tx = db.transaction([STORE_DATES, STORE_KEYS, STORE_ROSTER, STORE_CONTRACT], 'readonly');
     const readAll = (storeName) => new Promise((resolve, reject) => {
@@ -3551,7 +3600,7 @@ async function syncToGitHub(includeAccumulated) {
     } catch {}
     db.close();
 
-    const sharedData = { version: 1, exportedAt: new Date().toISOString(), dates, keyMeta, roster, contract, archiveMeta };
+    const localData = { version: 1, exportedAt: new Date().toISOString(), dates, keyMeta, roster, contract, archiveMeta };
 
     // 누적 저장 데이터 포함 (수동 누적저장 시에만)
     if (includeAccumulated) {
@@ -3562,12 +3611,19 @@ async function syncToGitHub(includeAccumulated) {
           accumulated[key] = localStorage.getItem(key);
         }
       }
-      sharedData.accumulated = accumulated;
+      localData.accumulated = accumulated;
     }
 
-    const content = btoa(unescape(encodeURIComponent(JSON.stringify(sharedData))));
+    // 2. 원격 데이터 다운로드 + 병합
+    const remoteData = await fetchRemoteData();
+    const sharedData = remoteData ? mergeSharedData(remoteData, localData) : localData;
 
-    // 2. 기존 파일의 SHA 가져오기 (업데이트 시 필요)
+    // 3. gzip 압축
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(sharedData));
+    const compressed = pako.gzip(jsonBytes);
+    const content = btoa(compressed.reduce((s, b) => s + String.fromCharCode(b), ''));
+
+    // 4. 기존 파일의 SHA 가져오기 (업데이트 시 필요)
     let sha = null;
     try {
       const existing = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}?ref=${GH_BRANCH}`, {
@@ -3579,7 +3635,7 @@ async function syncToGitHub(includeAccumulated) {
       }
     } catch {}
 
-    // 3. GitHub API로 커밋
+    // 5. GitHub API로 커밋
     const body = {
       message: `데이터 동기화 (${new Date().toLocaleString('ko-KR')})`,
       content,
@@ -3607,7 +3663,7 @@ async function syncToGitHub(includeAccumulated) {
       throw new Error(err.message || `HTTP ${res.status}`);
     }
 
-    // 4. 아카이브 파일 원본을 GitHub archive/ 폴더에 업로드
+    // 6. 아카이브 파일 원본을 GitHub archive/ 폴더에 업로드
     if (archiveMeta.length > 0) {
       const dbA = await openDB();
       const txA2 = dbA.transaction(STORE_ARCHIVE, 'readonly');
@@ -3687,7 +3743,7 @@ async function loadSharedData() {
     if (!res.ok) return false;
 
     const contentLength = +res.headers.get('Content-Length');
-    let jsonText;
+    let rawBytes;
     if (contentLength && res.body) {
       const reader = res.body.getReader();
       const chunks = [];
@@ -3700,19 +3756,27 @@ async function loadSharedData() {
         const dlPct = Math.min(received / contentLength, 1);
         setProgress(Math.round(dlPct * 50), `다운로드 ${(received / 1024 / 1024).toFixed(1)}MB / ${(contentLength / 1024 / 1024).toFixed(1)}MB`);
       }
-      const allChunks = new Uint8Array(received);
+      rawBytes = new Uint8Array(received);
       let pos = 0;
-      for (const chunk of chunks) { allChunks.set(chunk, pos); pos += chunk.length; }
-      jsonText = new TextDecoder().decode(allChunks);
+      for (const chunk of chunks) { rawBytes.set(chunk, pos); pos += chunk.length; }
     } else {
       barFill.classList.add('indeterminate');
       pctEl.textContent = '다운로드 중...';
-      jsonText = await res.text();
+      const buf = await res.arrayBuffer();
+      rawBytes = new Uint8Array(buf);
     }
 
-    // ── 2단계: JSON 파싱 (50~60%) ──
-    setProgress(50, 'JSON 파싱 중...');
+    // ── 2단계: 압축 해제 + JSON 파싱 (50~60%) ──
+    setProgress(50, '데이터 처리 중...');
     await new Promise(r => setTimeout(r, 0)); // UI 갱신 허용
+    let jsonText;
+    // gzip 매직 바이트 감지 (0x1f 0x8b)
+    if (rawBytes.length >= 2 && rawBytes[0] === 0x1f && rawBytes[1] === 0x8b) {
+      jsonText = pako.ungzip(rawBytes, { to: 'string' });
+    } else {
+      jsonText = new TextDecoder().decode(rawBytes);
+    }
+    rawBytes = null; // 메모리 해제
     const shared = JSON.parse(jsonText);
     jsonText = null; // 메모리 해제
     if (!shared.dates || !shared.roster) return false;
