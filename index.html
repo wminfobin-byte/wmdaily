@@ -181,6 +181,7 @@
   .loading-bar-fill { height: 100%; width: 0%; border-radius: 4px; background: linear-gradient(90deg, #4285f4, #1a73e8); transition: width 0.3s ease; }
   .loading-bar-fill.indeterminate { width: 30% !important; animation: loadingSlide 1.5s ease-in-out infinite; }
   @keyframes loadingSlide { 0% { margin-left: 0; } 50% { margin-left: 70%; } 100% { margin-left: 0; } }
+  @keyframes pulse { 0% { opacity: 1; } 100% { opacity: 0.3; } }
   .loading-pct { font-size: 12px; color: #5f6368; margin-top: 6px; font-variant-numeric: tabular-nums; display: none; }
   .loading-pct.active { display: block; }
 
@@ -411,7 +412,12 @@
 <div class="modal-overlay" id="uploadModal">
   <div class="modal">
     <button class="modal-close" onclick="closeModal()">&times;</button>
-    <h2>데이터 업로드</h2>
+    <h2 style="display:flex;align-items:center;gap:12px;">데이터 업로드
+      <span id="idbSyncStatus" style="display:none;font-size:12px;font-weight:500;color:#888;align-items:center;gap:6px;">
+        <span id="idbSyncIcon" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#fb8c00;"></span>
+        <span id="idbSyncText">데이터 동기화 중...</span>
+      </span>
+    </h2>
     <div class="upload-grid">
       <div class="upload-box" id="uploadRoster">
         <button class="btn-clear" onclick="clearRoster(event)" title="명단 초기화">✕</button>
@@ -3872,7 +3878,25 @@ async function loadSharedData() {
     // ── 7단계: IndexedDB 저장 ──
     // 로그인 사용자는 파일 업로드가 가능하므로 IDB 저장 완료를 기다림
     // 비로그인 사용자는 읽기 전용이므로 백그라운드 저장
+    function setIdbStatus(syncing, text) {
+      const el = document.getElementById('idbSyncStatus');
+      const icon = document.getElementById('idbSyncIcon');
+      const txt = document.getElementById('idbSyncText');
+      if (!el) return;
+      el.style.display = 'inline-flex';
+      if (syncing) {
+        icon.style.background = '#fb8c00';
+        icon.style.animation = 'pulse .8s ease-in-out infinite alternate';
+        txt.textContent = text || '데이터 동기화 중...';
+      } else {
+        icon.style.background = '#34a853';
+        icon.style.animation = 'none';
+        txt.textContent = text || '동기화 완료';
+        setTimeout(() => { el.style.display = 'none'; }, 5000);
+      }
+    }
     const saveToIDB = async () => {
+      setIdbStatus(true);
       try {
         await saveContractToDB();
         const db = await openDB();
@@ -3884,7 +3908,11 @@ async function loadSharedData() {
         await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
         db.close();
         _accCache = null;
-      } catch(e) { console.warn('IndexedDB 저장 오류:', e); }
+        setIdbStatus(false);
+      } catch(e) {
+        console.warn('IndexedDB 저장 오류:', e);
+        setIdbStatus(false, '동기화 실패');
+      }
     };
     if (authPassed) {
       setProgress(96, '데이터 저장 중...');
