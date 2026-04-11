@@ -1014,18 +1014,24 @@ const STORE_ARCHIVE = 'fileArchive';
 
 function openDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_DATES)) db.createObjectStore(STORE_DATES);
-      if (!db.objectStoreNames.contains(STORE_KEYS)) db.createObjectStore(STORE_KEYS);
-      if (!db.objectStoreNames.contains(STORE_ROSTER)) db.createObjectStore(STORE_ROSTER);
-      if (!db.objectStoreNames.contains(STORE_CONTRACT)) db.createObjectStore(STORE_CONTRACT);
-      if (!db.objectStoreNames.contains(STORE_FILEMETA)) db.createObjectStore(STORE_FILEMETA);
-      if (!db.objectStoreNames.contains(STORE_ARCHIVE)) db.createObjectStore(STORE_ARCHIVE);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    try {
+      const timeout = setTimeout(() => reject(new Error('IndexedDB timeout')), 5000);
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = e => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_DATES)) db.createObjectStore(STORE_DATES);
+        if (!db.objectStoreNames.contains(STORE_KEYS)) db.createObjectStore(STORE_KEYS);
+        if (!db.objectStoreNames.contains(STORE_ROSTER)) db.createObjectStore(STORE_ROSTER);
+        if (!db.objectStoreNames.contains(STORE_CONTRACT)) db.createObjectStore(STORE_CONTRACT);
+        if (!db.objectStoreNames.contains(STORE_FILEMETA)) db.createObjectStore(STORE_FILEMETA);
+        if (!db.objectStoreNames.contains(STORE_ARCHIVE)) db.createObjectStore(STORE_ARCHIVE);
+      };
+      req.onsuccess = () => { clearTimeout(timeout); resolve(req.result); };
+      req.onerror = () => { clearTimeout(timeout); reject(req.error); };
+      req.onblocked = () => { clearTimeout(timeout); reject(new Error('IndexedDB blocked')); };
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
@@ -4039,7 +4045,7 @@ async function migrateV6vi25() {
 
   showIndeterminate('데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '초기화 중...');
 
-  await migrateV6vi25();
+  await migrateV6vi25().catch(() => {});
   refreshStorageDisplay().catch(() => {});
   cleanupAccumulatedByMonth();
   refreshAccDisplay();
