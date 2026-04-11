@@ -1424,6 +1424,7 @@ async function toggleArchiveList() {
     if (items.length === 0) {
       el.innerHTML = '<div style="color:#888;padding:4px 0;">저장된 파일이 없습니다.</div>';
     } else {
+      items.sort((a, b) => (b.date || b.name).localeCompare(a.date || a.name));
       el.innerHTML = items.map(f => {
         const escaped = f.name.replace(/'/g, "\\'");
         const delBtn = authPassed
