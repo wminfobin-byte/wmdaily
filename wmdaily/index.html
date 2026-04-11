@@ -2917,14 +2917,14 @@ async function downloadExcel(tab) {
 // ── 누적 엑셀저장 ──
 // ══════════════════════════════════════════════
 
-// 방법2: 대시보드 빌드 시 자동 저장 (이미 저장된 날짜는 건너뜀)
+// 방법2: 대시보드 빌드 시 자동 저장 (최신 날짜는 항상 덮어쓰기)
 function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
-  if (groupedMain && !localStorage.getItem(getAccStorageKey('main', dateKey))) {
+  if (groupedMain) {
     const data = serializeGrouped(groupedMain);
     data._dateLabel = dateKey;
     localStorage.setItem(getAccStorageKey('main', dateKey), JSON.stringify(data));
   }
-  if (groupedTalkis && !localStorage.getItem(getAccStorageKey('talkis', dateKey))) {
+  if (groupedTalkis) {
     const data = serializeGrouped(groupedTalkis);
     data._dateLabel = dateKey;
     localStorage.setItem(getAccStorageKey('talkis', dateKey), JSON.stringify(data));
