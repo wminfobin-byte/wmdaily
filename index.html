@@ -1424,13 +1424,18 @@ async function toggleArchiveList() {
     if (items.length === 0) {
       el.innerHTML = '<div style="color:#888;padding:4px 0;">저장된 파일이 없습니다.</div>';
     } else {
-      el.innerHTML = items.map(f =>
-        `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #eee;">` +
-        `<span style="flex:1;word-break:break-all;">${f.name}</span>` +
-        `<span style="color:#888;white-space:nowrap;font-size:11px;">${f.date}</span>` +
-        `<button onclick="downloadArchiveFile('${f.name.replace(/'/g, "\\'")}')" style="padding:2px 8px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;font-size:11px;white-space:nowrap;">다운로드</button>` +
-        `</div>`
-      ).join('');
+      el.innerHTML = items.map(f => {
+        const escaped = f.name.replace(/'/g, "\\'");
+        const delBtn = authPassed
+          ? `<button onclick="deleteArchiveFile('${escaped}')" style="padding:2px 8px;border:1px solid #ea4335;border-radius:4px;background:#fff;color:#ea4335;cursor:pointer;font-size:11px;white-space:nowrap;">삭제</button>`
+          : '';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid #eee;">` +
+          `<span style="flex:1;word-break:break-all;">${f.name}</span>` +
+          `<span style="color:#888;white-space:nowrap;font-size:11px;">${f.date}</span>` +
+          `<button onclick="downloadArchiveFile('${escaped}')" style="padding:2px 8px;border:1px solid #ccc;border-radius:4px;background:#fff;cursor:pointer;font-size:11px;white-space:nowrap;">다운로드</button>` +
+          delBtn +
+          `</div>`;
+      }).join('');
     }
     el.style.display = 'block';
   } catch (err) {
@@ -1470,6 +1475,24 @@ async function downloadArchiveFile(fileName) {
     URL.revokeObjectURL(link.href);
   } catch (err) {
     alert('다운로드 오류: ' + err.message);
+  }
+}
+
+async function deleteArchiveFile(fileName) {
+  if (!confirm(`"${fileName}" 을(를) 삭제하시겠습니까?`)) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ARCHIVE, 'readwrite');
+    tx.objectStore(STORE_ARCHIVE).delete(fileName);
+    await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+    db.close();
+    showStatus(`${fileName} 삭제 완료`, 'success');
+    // 목록 새로고침
+    const el = document.getElementById('archiveList');
+    el.style.display = 'none';
+    toggleArchiveList();
+  } catch (err) {
+    showStatus('삭제 오류: ' + err.message, 'error');
   }
 }
 
