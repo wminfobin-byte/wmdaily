@@ -1408,8 +1408,9 @@ async function toggleArchiveList() {
         req.onerror = () => reject(req.error);
       });
       db.close();
-    } else {
-      // 비로그인 사용자: GitHub 공유 데이터에서 읽기
+    }
+    // 로컬에 없으면 GitHub에서 가져오기
+    if (items.length === 0) {
       try {
         const shared = await fetchRemoteData();
         if (shared) items = shared.archiveMeta || [];
@@ -1436,34 +1437,32 @@ async function toggleArchiveList() {
 
 async function downloadArchiveFile(fileName) {
   try {
+    let blob = null;
+    // 로컬 IndexedDB에서 먼저 시도
     if (authPassed) {
-      // 로그인 사용자: 로컬 IndexedDB에서 다운로드
-      const db = await openDB();
-      const tx = db.transaction(STORE_ARCHIVE, 'readonly');
-      const item = await new Promise((resolve, reject) => {
-        const req = tx.objectStore(STORE_ARCHIVE).get(fileName);
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-      db.close();
-      if (!item || !item.data) { alert('파일 데이터를 찾을 수 없습니다.'); return; }
-      const blob = new Blob([item.data]);
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(link.href);
-    } else {
-      // 비로그인 사용자: GitHub에서 다운로드
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_ARCHIVE, 'readonly');
+        const item = await new Promise((resolve, reject) => {
+          const req = tx.objectStore(STORE_ARCHIVE).get(fileName);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+        db.close();
+        if (item && item.data) blob = new Blob([item.data]);
+      } catch {}
+    }
+    // 로컬에 없으면 GitHub에서 다운로드
+    if (!blob) {
       const res = await fetch(`https://raw.githubusercontent.com/${GH_REPO}/${GH_BRANCH}/archive/${encodeURIComponent(fileName)}?t=${Date.now()}`);
       if (!res.ok) { alert('파일을 찾을 수 없습니다. 동기화가 필요합니다.'); return; }
-      const blob = await res.blob();
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = fileName;
-      link.click();
-      URL.revokeObjectURL(link.href);
+      blob = await res.blob();
     }
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(link.href);
   } catch (err) {
     alert('다운로드 오류: ' + err.message);
   }
