@@ -3839,8 +3839,10 @@ async function loadSharedData() {
     try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
     setProgress(95, '완료');
 
-    // ── 7단계: IndexedDB 백그라운드 저장 (사용자 대기 없음) ──
-    (async () => {
+    // ── 7단계: IndexedDB 저장 ──
+    // 로그인 사용자는 파일 업로드가 가능하므로 IDB 저장 완료를 기다림
+    // 비로그인 사용자는 읽기 전용이므로 백그라운드 저장
+    const saveToIDB = async () => {
       try {
         await saveContractToDB();
         const db = await openDB();
@@ -3851,9 +3853,15 @@ async function loadSharedData() {
         for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
         await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
         db.close();
-        _accCache = null; // IDB 저장 완료 후 캐시 해제
-      } catch(e) { console.warn('IndexedDB 백그라운드 저장 오류:', e); }
-    })();
+        _accCache = null;
+      } catch(e) { console.warn('IndexedDB 저장 오류:', e); }
+    };
+    if (authPassed) {
+      setProgress(96, '데이터 저장 중...');
+      await saveToIDB();
+    } else {
+      saveToIDB(); // 백그라운드
+    }
     setProgress(100, '완료');
 
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
