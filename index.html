@@ -3580,11 +3580,11 @@ function mergeSharedData(remote, local) {
   // contract: 월별 계약 — 합집합, 같은 월은 로컬 우선
   merged.contract = Object.assign({}, remote.contract || {}, local.contract || {});
 
-  // archiveMeta: 이름 기준 합집합
-  const archiveMap = new Map();
-  (remote.archiveMeta || []).forEach(a => archiveMap.set(a.name, a));
-  (local.archiveMeta || []).forEach(a => archiveMap.set(a.name, a));
-  merged.archiveMeta = [...archiveMap.values()];
+  // archiveMeta: 로컬 기준 (로컬에서 삭제된 파일은 원격에서도 제거)
+  merged.archiveMeta = local.archiveMeta || [];
+  // 삭제 대상: 원격에 있지만 로컬에 없는 파일
+  const localArchiveNames = new Set((local.archiveMeta || []).map(a => a.name));
+  merged._deletedArchives = (remote.archiveMeta || []).filter(a => !localArchiveNames.has(a.name)).map(a => a.name);
 
   // accumulated: 합집합, 같은 키는 로컬 우선
   if (remote.accumulated || local.accumulated) {
@@ -3737,6 +3737,26 @@ async function syncToGitHub(includeAccumulated) {
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(fileBody),
         });
+      }
+    }
+
+    // 7. 삭제된 아카이브 파일을 GitHub에서도 제거
+    if (sharedData._deletedArchives && sharedData._deletedArchives.length > 0) {
+      for (const fileName of sharedData._deletedArchives) {
+        try {
+          const filePath = `archive/${fileName}`;
+          const existRes = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(filePath)}?ref=${GH_BRANCH}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (existRes.ok) {
+            const fileSha = (await existRes.json()).sha;
+            await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${encodeURIComponent(filePath)}`, {
+              method: 'DELETE',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: `아카이브 삭제: ${fileName}`, sha: fileSha, branch: GH_BRANCH }),
+            });
+          }
+        } catch {}
       }
     }
 
