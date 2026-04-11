@@ -1029,7 +1029,12 @@ function openDB() {
   });
 }
 
+// 메모리 캐시: 공유 데이터 로드 시 IDB 저장 전에 대시보드를 바로 빌드하기 위함
+let _accCache = null;
+
 async function loadAccumulated() {
+  // 메모리 캐시가 있으면 IDB 읽기 스킵
+  if (_accCache) return _accCache;
   try {
     const db = await openDB();
     const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readonly');
@@ -3819,33 +3824,36 @@ async function loadSharedData() {
       refreshAccDisplay();
     }
 
-    // ── 5단계: IndexedDB 저장 (75~85%) ──
-    // tryBuildTab4()가 loadAccumulated()로 IndexedDB를 읽으므로, 대시보드 빌드 전에 저장
-    setProgress(75, '데이터 저장 중...');
+    // ── 5단계: 메모리 캐시 설정 + 대시보드 빌드 (75~90%) ──
+    // IDB 저장 없이 메모리 캐시로 대시보드를 바로 빌드
+    setProgress(75, '대시보드 생성 중...');
     await new Promise(r => setTimeout(r, 0));
-    try {
-      await saveContractToDB();
-      const db = await openDB();
-      const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
-      const dateStore = tx.objectStore(STORE_DATES);
-      const keyStore = tx.objectStore(STORE_KEYS);
-      for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
-      for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
-      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
-      db.close();
-    } catch(e) { console.warn('IndexedDB 저장 오류:', e); }
-
-    // ── 6단계: 대시보드 빌드 (85~95%) ──
-    setProgress(85, '대시보드 생성 중...');
-    await new Promise(r => setTimeout(r, 0));
+    _accCache = { dates: shared.dates, keyMeta: shared.keyMeta };
     if (rosterMap && contractData) {
       await tryBuildTab4();
     }
 
-    // ── 7단계: 빠진 날짜 누적 데이터 보충 (95~100%) ──
-    setProgress(95, '누적 데이터 보충 중...');
+    // ── 6단계: 빠진 날짜 누적 데이터 보충 (90~95%) ──
+    setProgress(90, '누적 데이터 보충 중...');
     await new Promise(r => setTimeout(r, 0));
     try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
+    setProgress(95, '완료');
+
+    // ── 7단계: IndexedDB 백그라운드 저장 (사용자 대기 없음) ──
+    (async () => {
+      try {
+        await saveContractToDB();
+        const db = await openDB();
+        const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+        const dateStore = tx.objectStore(STORE_DATES);
+        const keyStore = tx.objectStore(STORE_KEYS);
+        for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
+        for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
+        await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+        db.close();
+        _accCache = null; // IDB 저장 완료 후 캐시 해제
+      } catch(e) { console.warn('IndexedDB 백그라운드 저장 오류:', e); }
+    })();
     setProgress(100, '완료');
 
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
