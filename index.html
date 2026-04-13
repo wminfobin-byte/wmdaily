@@ -732,11 +732,16 @@ function fmtDateTime(date) {
 
 // 파일명에서 월 키 추출: "신청자관리_2603" → "2026-03", "WM_근태보고_그룹_202603" → "2026-03"
 function extractMonthKey(filename) {
-  // 6자리 이상 먼저 시도 (yyyymm)
+  // 6자리 이상 먼저 시도 (yyyymm) — 연/월 유효성 검사로 260411 같은 yymmdd 오인 방지
   const m6 = filename.match(/(\d{4})[\-_.]?(\d{2})/);
   if (m6) {
     const num = m6[1] + m6[2];
-    if (num.length >= 6) return `${num.slice(0,4)}-${num.slice(4,6)}`;
+    if (num.length >= 6) {
+      const y = +num.slice(0,4), mo = +num.slice(4,6);
+      if (y >= 2020 && y <= 2099 && mo >= 1 && mo <= 12) {
+        return `${num.slice(0,4)}-${num.slice(4,6)}`;
+      }
+    }
   }
   // 4자리 yymm (신청자관리_2604 등)
   const m4 = filename.match(/(\d{2})(\d{2})/);
