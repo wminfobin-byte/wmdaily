@@ -1781,6 +1781,7 @@ async function loadSavedFiles() {
     if (contractEntries.length > 0) {
       contractByMonth = {};
       for (const [monthKey, rows] of contractEntries) {
+        if (!isValidMonthKey(monthKey)) { console.warn('[loadSaved] 잘못된 계약 월 키 무시:', monthKey); continue; }
         contractByMonth[monthKey] = rows;
       }
       contractData = mergeAllContracts();
