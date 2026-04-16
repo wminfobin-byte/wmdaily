@@ -3766,6 +3766,7 @@ async function syncToGitHub(includeAccumulated) {
     }
 
     updateSyncTime();
+    localStorage.setItem('gh_data_exportedAt', localData.exportedAt);
   } catch (err) {
     throw err;
   }
@@ -3925,7 +3926,16 @@ async function loadSharedData() {
       try {
         await saveContractToDB();
         const db = await openDB();
+        // 명단 저장 (clear 후 재저장)
+        const txR = db.transaction(STORE_ROSTER, 'readwrite');
+        const rosterStore = txR.objectStore(STORE_ROSTER);
+        rosterStore.clear();
+        for (const [mk, rows] of Object.entries(shared.roster || {})) rosterStore.put(rows, mk);
+        await new Promise((resolve, reject) => { txR.oncomplete = resolve; txR.onerror = () => reject(txR.error); });
+        // dates/keyMeta 저장 (clear 후 재저장 — 오래된 키 잔존 방지)
         const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+        tx.objectStore(STORE_DATES).clear();
+        tx.objectStore(STORE_KEYS).clear();
         const dateStore = tx.objectStore(STORE_DATES);
         const keyStore = tx.objectStore(STORE_KEYS);
         for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
@@ -3947,6 +3957,7 @@ async function loadSharedData() {
     }
     setProgress(100, '완료');
 
+    localStorage.setItem('gh_data_exportedAt', shared.exportedAt || '');
     const exportDate = shared.exportedAt ? new Date(shared.exportedAt).toLocaleString('ko-KR') : '';
     if (exportDate) {
       document.getElementById('lastUpdate').textContent = `최종 업데이트: ${exportDate}`;
@@ -3961,6 +3972,90 @@ async function loadSharedData() {
   } catch(e) {
     console.error('loadSharedData 오류:', e);
     return false;
+  }
+}
+
+// ── 백그라운드 원격 데이터 갱신 ──
+async function refreshFromRemoteIfNeeded() {
+  try {
+    const remote = await fetchRemoteData();
+    if (!remote || !remote.exportedAt) return;
+    const localAt = localStorage.getItem('gh_data_exportedAt') || '';
+    if (localAt && remote.exportedAt <= localAt) {
+      console.log('[remoteRefresh] 로컬 데이터가 최신입니다.');
+      return;
+    }
+    console.log('[remoteRefresh] 원격 데이터가 더 최신:', remote.exportedAt, '>', localAt);
+
+    // 명단 복원
+    rosterByMonth = {};
+    for (const [monthKey, rows] of Object.entries(remote.roster || {})) {
+      rosterByMonth[monthKey] = parseRosterRows(rows);
+    }
+    const latestRosterMonth = Object.keys(rosterByMonth).sort().pop();
+    if (latestRosterMonth) {
+      rosterMap = rosterByMonth[latestRosterMonth];
+      document.getElementById('uploadRoster').classList.add('loaded');
+      const totalNames = Object.values(rosterByMonth).reduce((s, m) => Math.max(s, m.size), 0);
+      document.getElementById('rosterStatus').textContent = `${totalNames}명 (공유 데이터)`;
+    }
+
+    // 계약 복원
+    if (remote.contract) {
+      contractByMonth = {};
+      for (const [mk, rows] of Object.entries(remote.contract)) {
+        contractByMonth[mk] = rows;
+      }
+      contractData = mergeAllContracts();
+      if (contractData) {
+        document.getElementById('uploadContract').classList.add('loaded');
+        const months = Object.keys(contractByMonth).sort();
+        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터, ${months.join(', ')})`;
+      }
+    }
+
+    // 누적 저장 데이터 복원
+    if (remote.accumulated) {
+      for (const [key, val] of Object.entries(remote.accumulated)) {
+        localStorage.setItem(key, val);
+      }
+    }
+
+    // 메모리 캐시 + 대시보드 재빌드
+    _accCache = { dates: remote.dates, keyMeta: remote.keyMeta };
+    if (rosterMap && contractData) await tryBuildTab4();
+
+    // 빠진 날짜 누적 데이터 보충
+    try { await buildAllDateAccumulated(); } catch {}
+    refreshAccDisplay();
+
+    // IDB 저장 (clear 후 재저장)
+    try {
+      await saveContractToDB();
+      const db = await openDB();
+      const txR = db.transaction(STORE_ROSTER, 'readwrite');
+      const rs = txR.objectStore(STORE_ROSTER);
+      rs.clear();
+      for (const [mk, rows] of Object.entries(remote.roster || {})) rs.put(rows, mk);
+      await new Promise((resolve, reject) => { txR.oncomplete = resolve; txR.onerror = () => reject(txR.error); });
+
+      const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+      tx.objectStore(STORE_DATES).clear();
+      tx.objectStore(STORE_KEYS).clear();
+      for (const [k, v] of Object.entries(remote.dates)) tx.objectStore(STORE_DATES).put(v, k);
+      for (const [k, v] of Object.entries(remote.keyMeta)) tx.objectStore(STORE_KEYS).put(v, k);
+      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+      db.close();
+      _accCache = null;
+    } catch(e) {
+      console.warn('[remoteRefresh] IDB 저장 오류:', e);
+    }
+
+    localStorage.setItem('gh_data_exportedAt', remote.exportedAt);
+    const exportDate = new Date(remote.exportedAt).toLocaleString('ko-KR');
+    showStatus(`최신 데이터로 업데이트되었습니다. (${exportDate} 기준)`, 'success');
+  } catch(e) {
+    console.warn('[remoteRefresh] 원격 데이터 확인 오류:', e);
   }
 }
 
@@ -4115,6 +4210,8 @@ async function migrateV6vi25() {
     try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
     showLoading(100, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '완료');
     hideLoading();
+    // 백그라운드에서 GitHub 최신 데이터 확인 + 자동 갱신
+    refreshFromRemoteIfNeeded();
   } else {
     // 로컬 데이터 없음 → 공유 데이터 시도
     showLoading(0, '공유 데이터를 불러오는 중입니다…<br><small style="color:#888;">데이터 크기에 따라 시간이 걸릴 수 있습니다.</small>', '서버 연결 중...');
