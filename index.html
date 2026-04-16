@@ -2406,6 +2406,33 @@ async function tryBuildTab4() {
 
   const filteredDateSet = new Set(accDates);
   const latestDate = accDates.length > 0 ? accDates[accDates.length - 1] : null;
+
+  // ── 스냅샷 사용: 조회 종료일에 저장된 스냅샷이 있으면 라이브 계산 대신 사용 ──
+  const _snapEnd = dateEnd || latestDate;
+  const _snapMainRaw = _snapEnd ? localStorage.getItem(getAccStorageKey('main', _snapEnd)) : null;
+  const _snapTalkisRaw = _snapEnd ? localStorage.getItem(getAccStorageKey('talkis', _snapEnd)) : null;
+  const useSnapshot = _snapMainRaw && _snapTalkisRaw;
+
+  if (useSnapshot) {
+    console.log('[tryBuildTab4] 스냅샷 사용:', _snapEnd);
+    const snapMain = JSON.parse(_snapMainRaw); delete snapMain._dateLabel;
+    const snapTalkis = JSON.parse(_snapTalkisRaw); delete snapTalkis._dateLabel;
+    for (const persons of Object.values(snapMain).concat(Object.values(snapTalkis))) {
+      for (const p of persons) {
+        personStats.set(p.name, {
+          todayDb: p.todayDb || 0, todayDbNonIN: p.todayDbNonIN || 0,
+          todayDailyContract: p.todayDailyContract || 0, todayActualContract: p.todayActualContract || 0,
+          todayContractNonIN: p.todayContractNonIN || 0,
+          cumDbNonIN: p.cumDbNonIN || 0, cumCancelNonIN: p.cumCancelNonIN || 0, cumContractNonIN: p.cumContractNonIN || 0,
+          cumDbIN: p.cumDbIN || 0, cumCancelIN: p.cumCancelIN || 0, cumContractIN: p.cumContractIN || 0,
+          cumContractAll: p.cumContractAll || 0, cumDbAll: p.cumDbAll || 0,
+          holDb: p.holDb || 0, holDailyContract: p.holDailyContract || 0, holActualContract: p.holActualContract || 0,
+          todayHolContract: p.todayHolContract || 0,
+        });
+      }
+    }
+  } else {
+  console.log('[tryBuildTab4] 라이브 계산:', _snapEnd);
   for (const [date, dayData] of Object.entries(acc.dates)) {
     if (!filteredDateSet.has(date)) continue;
     const isLatest = (date === latestDate);
@@ -2493,6 +2520,7 @@ async function tryBuildTab4() {
       }
     }
   });
+  } // end else (라이브 계산)
 
   // 휴일근무 디버그 로그
   console.log('=== 휴일근무 디버그 ===');
