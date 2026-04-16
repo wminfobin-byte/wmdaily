@@ -4126,7 +4126,13 @@ async function refreshFromRemoteIfNeeded() {
     const remote = await fetchRemoteData();
     if (!remote || !remote.exportedAt) return;
     const localAt = localStorage.getItem('gh_data_exportedAt') || '';
-    if (localAt && remote.exportedAt <= localAt) {
+    if (!localAt) {
+      // 최초 실행(배포 직후): 로컬 데이터를 신뢰하고 타임스탬프만 기록
+      localStorage.setItem('gh_data_exportedAt', remote.exportedAt || '');
+      console.log('[remoteRefresh] 최초 실행: 타임스탬프 설정만 완료');
+      return;
+    }
+    if (remote.exportedAt <= localAt) {
       console.log('[remoteRefresh] 로컬 데이터가 최신입니다.');
       return;
     }
