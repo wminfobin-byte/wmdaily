@@ -2411,7 +2411,9 @@ async function tryBuildTab4() {
   const _snapEnd = dateEnd || latestDate;
   const _snapMainRaw = _snapEnd ? localStorage.getItem(getAccStorageKey('main', _snapEnd)) : null;
   const _snapTalkisRaw = _snapEnd ? localStorage.getItem(getAccStorageKey('talkis', _snapEnd)) : null;
-  const useSnapshot = _snapMainRaw && _snapTalkisRaw;
+  // 최신 날짜(=오늘 데이터)는 항상 라이브 계산 (업로드 직후 반영 위해)
+  const _isLatestDate = _snapEnd === globalLatestDate || _snapEnd === latestDate;
+  const useSnapshot = _snapMainRaw && _snapTalkisRaw && !_isLatestDate;
 
   if (useSnapshot) {
     console.log('[tryBuildTab4] 스냅샷 사용:', _snapEnd);
