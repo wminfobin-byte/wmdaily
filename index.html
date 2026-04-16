@@ -704,6 +704,12 @@ const KOREAN_HOLIDAYS = new Set([
   '2026-12-25'
 ]);
 
+function isValidMonthKey(mk) {
+  if (!/^\d{4}-\d{2}$/.test(mk)) return false;
+  const y = +mk.slice(0, 4), m = +mk.slice(5, 7);
+  return y >= 2020 && y <= 2099 && m >= 1 && m <= 12;
+}
+
 function isHoliday(dateStr) {
   if (!dateStr) return false;
   if (KOREAN_HOLIDAYS.has(dateStr)) return true;
@@ -3901,6 +3907,7 @@ async function loadSharedData() {
     if (shared.contract) {
       contractByMonth = {};
       for (const [monthKey, rows] of Object.entries(shared.contract)) {
+        if (!isValidMonthKey(monthKey)) { console.warn('[loadShared] 잘못된 계약 월 키 무시:', monthKey); continue; }
         contractByMonth[monthKey] = rows;
       }
       contractData = mergeAllContracts();
@@ -4149,6 +4156,7 @@ async function refreshFromRemoteIfNeeded() {
     if (remote.contract) {
       contractByMonth = {};
       for (const [mk, rows] of Object.entries(remote.contract)) {
+        if (!isValidMonthKey(mk)) { console.warn('[remoteRefresh] 잘못된 계약 월 키 무시:', mk); continue; }
         contractByMonth[mk] = rows;
       }
       contractData = mergeAllContracts();
