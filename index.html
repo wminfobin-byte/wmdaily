@@ -3615,8 +3615,8 @@ function mergeSharedData(remote, local) {
   // roster: 월별 명단 — 합집합, 같은 월은 로컬 우선
   merged.roster = Object.assign({}, remote.roster || {}, local.roster || {});
 
-  // contract: 월별 계약 — 합집합, 같은 월은 로컬 우선
-  merged.contract = Object.assign({}, remote.contract || {}, local.contract || {});
+  // contract: 로컬 기준 (사용자가 초기화 후 재업로드하므로 원격 잔여 키 유입 방지)
+  merged.contract = local.contract || {};
 
   // archiveMeta: 로컬 기준 (로컬에서 삭제된 파일은 원격에서도 제거)
   merged.archiveMeta = local.archiveMeta || [];
