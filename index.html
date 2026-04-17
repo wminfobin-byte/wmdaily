@@ -2995,7 +2995,7 @@ async function downloadExcel(tab) {
     delete raw._dateLabel;
     const parts = dt.split('-');
     const sheetName = parts[0].slice(2) + parts[1] + parts[2];
-    const accWs = buildAccSheet(raw, dateLabel);
+    const accWs = buildAccSheet(raw, dateLabel, tab);
     XLSX.utils.book_append_sheet(wb, accWs, sheetName);
   }
 
@@ -3292,7 +3292,7 @@ function getAccSavedDates(tab) {
   return dates.sort();
 }
 
-function buildAccSheet(groupedData, dateLabel) {
+function buildAccSheet(groupedData, dateLabel, tab) {
   const groupBgMap = { 'W그룹': '1565C0', 'E그룹': '1E88E5', 'N그룹': '42A5F5', '제2외국어': '81C784', '톡이즈': 'B39DDB' };
   const sectionBgs = ['FFFFFF','FFFFFF','FFFFFF','FFFFFF','FFFFFF','FFFFFF', 'E3F2FD','E3F2FD','E3F2FD','E3F2FD', 'E8F5E9','E8F5E9','E8F5E9', 'FFF8E1','FFF8E1','FFF8E1', 'FCE4EC','FCE4EC', 'F3E5F5','F3E5F5','F3E5F5','F3E5F5', 'E0F2F1','E0F2F1','E0F2F1', 'FFFFFF','FFFFFF'];
   const sectionMerges = [[1,5],[6,9],[10,12],[13,15],[16,17],[18,21],[22,24]];
@@ -3305,6 +3305,35 @@ function buildAccSheet(groupedData, dateLabel) {
   // Top margin
   rows.push(new Array(totalCols).fill(''));
   rowMeta.push({ type: 'margin' });
+
+  // 뇌새김 전체 합계 (최상단)
+  if (tab === 'main') {
+    const agg = { todayDb:0, todayDailyContract:0, todayActualContract:0, cumDbNonIN:0, cumCancelNonIN:0, cumContractNonIN:0, cumDbIN:0, cumCancelIN:0, cumContractIN:0, cumContractAll:0, cumDbAll:0, holDb:0, holDailyContract:0, holActualContract:0 };
+    for (const persons of Object.values(groupedData)) {
+      if (!persons) continue;
+      for (const p of persons) {
+        for (const k of Object.keys(agg)) agg[k] += p[k] || 0;
+      }
+    }
+    const aggPureDb = Math.max(0, agg.cumDbNonIN - agg.holDb);
+    const aggPureCt = Math.max(0, agg.cumContractNonIN - agg.holActualContract);
+    const rateVal = (n, d) => (!d || d === 0) ? '-' : +(n / d * 100).toFixed(1) + '%';
+    const aggRow = ['', '', '', '', '', '전체 합계',
+      agg.todayDb, agg.todayDailyContract, agg.todayActualContract, rateVal(agg.todayActualContract, agg.todayDb),
+      agg.cumDbNonIN, agg.cumCancelNonIN, agg.cumContractNonIN,
+      agg.cumDbIN, agg.cumCancelIN, agg.cumContractIN,
+      agg.cumContractAll, rateVal(agg.cumContractAll, agg.cumDbAll),
+      agg.holDb, agg.holDailyContract, agg.holActualContract, rateVal(agg.holActualContract, agg.holDb),
+      aggPureDb, aggPureCt, rateVal(aggPureCt, Math.max(1, aggPureDb)),
+      '', ''];
+
+    // 위 빈줄
+    rows.push(new Array(totalCols).fill('')); rowMeta.push({ type: 'blank' });
+    // 합계 행
+    rows.push(aggRow); rowMeta.push({ type: 'grandtotal' });
+    // 아래 빈줄
+    rows.push(new Array(totalCols).fill('')); rowMeta.push({ type: 'blank' });
+  }
 
   const grpRank = { 'W그룹': 3, 'E그룹': 2, 'N그룹': 1 };
   let groupIdx = 0;
@@ -3452,6 +3481,9 @@ function buildAccSheet(groupedData, dateLabel) {
       } else if (meta.type === 'total') {
         cell.s = { fill: { fgColor: { rgb: 'EEF1F5' } }, font: { bold: true, color: { rgb: '333333' }, sz: 11 }, alignment: { horizontal: 'center', vertical: 'center' }, border: thickTopBorder };
         if (rateCols.has(c)) cell.s.font = { bold: true, color: { rgb: '1A73E8' }, sz: 11 };
+      } else if (meta.type === 'grandtotal') {
+        cell.s = { fill: { fgColor: { rgb: 'D6E6F5' } }, font: { bold: true, color: { rgb: '0D47A1' }, sz: 12 }, alignment: { horizontal: 'center', vertical: 'center' }, border: thickTopBorder };
+        if (rateCols.has(c)) cell.s.font = { bold: true, color: { rgb: '1A73E8' }, sz: 12 };
       } else {
         const bg = meta.groupChgType === 'demoted' ? 'DDD9C4' : meta.groupChgType === 'promoted' ? 'C5D9F1' : (r % 2 === 0) ? 'FAFBFC' : 'FFFFFF';
         cell.s = { fill: { fgColor: { rgb: bg } }, font: { color: { rgb: '333333' }, sz: 10 }, alignment: { horizontal: 'center', vertical: 'center' }, border: thinBorder };
@@ -3476,6 +3508,7 @@ function buildAccSheet(groupedData, dateLabel) {
     else if (meta.type === 'section') ws['!rows'][r] = { hpt: 22 };
     else if (meta.type === 'subheader') ws['!rows'][r] = { hpt: 22 };
     else if (meta.type === 'total') ws['!rows'][r] = { hpt: 22 };
+    else if (meta.type === 'grandtotal') ws['!rows'][r] = { hpt: 26 };
     else if (meta.type === 'blank') ws['!rows'][r] = { hpt: 10 };
     else ws['!rows'][r] = { hpt: 20 };
   }
