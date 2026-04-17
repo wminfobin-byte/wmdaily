@@ -741,6 +741,9 @@ function fmtRate(n, d) {
   if (!d || d === 0) return '-';
   return (n / d * 100).toFixed(1) + '%';
 }
+function fmtNum(n) {
+  return (Number(n) || 0).toLocaleString();
+}
 function fmtDateShort(val) {
   const d = parseDate(val);
   return d ? fmtDate(d) : '';
@@ -2755,12 +2758,12 @@ async function tryBuildTab4() {
 
         html += `<tr>`;
         html += `<td>${rank}</td><td class="left"${gs}>${p.center}</td><td class="left"${gs}>${p.team}</td><td class="name-cell"${gs}>${p.name}</td><td${gs}>${p.hireDate}</td>`;
-        html += `<td>${p.todayDb}</td><td>${p.todayDailyContract}</td><td>${p.todayActualContract}</td><td class="rate-cell">${fmtRate(p.todayActualContract, p.todayDb)}</td>`;
-        html += `<td>${p.cumDbNonIN}</td><td>${p.cumCancelNonIN}</td><td>${p.cumContractNonIN}</td>`;
-        html += `<td>${p.cumDbIN}</td><td>${p.cumCancelIN}</td><td>${p.cumContractIN}</td>`;
-        html += `<td>${p.cumContractAll}</td><td class="rate-cell">${fmtRate(p.cumContractAll, p.cumDbAll)}</td>`;
-        html += `<td>${p.holDb}</td><td>${p.holDailyContract}</td><td>${p.holActualContract}</td><td class="rate-cell">${fmtRate(p.holActualContract, p.holDb)}</td>`;
-        html += `<td>${Math.max(0, pureDb)}</td><td>${Math.max(0, pureContract)}</td><td class="rate-cell">${fmtRate(Math.max(0, pureContract), Math.max(1, pureDb))}</td>`;
+        html += `<td>${fmtNum(p.todayDb)}</td><td>${fmtNum(p.todayDailyContract)}</td><td>${fmtNum(p.todayActualContract)}</td><td class="rate-cell">${fmtRate(p.todayActualContract, p.todayDb)}</td>`;
+        html += `<td>${fmtNum(p.cumDbNonIN)}</td><td>${fmtNum(p.cumCancelNonIN)}</td><td>${fmtNum(p.cumContractNonIN)}</td>`;
+        html += `<td>${fmtNum(p.cumDbIN)}</td><td>${fmtNum(p.cumCancelIN)}</td><td>${fmtNum(p.cumContractIN)}</td>`;
+        html += `<td>${fmtNum(p.cumContractAll)}</td><td class="rate-cell">${fmtRate(p.cumContractAll, p.cumDbAll)}</td>`;
+        html += `<td>${fmtNum(p.holDb)}</td><td>${fmtNum(p.holDailyContract)}</td><td>${fmtNum(p.holActualContract)}</td><td class="rate-cell">${fmtRate(p.holActualContract, p.holDb)}</td>`;
+        html += `<td>${fmtNum(Math.max(0, pureDb))}</td><td>${fmtNum(Math.max(0, pureContract))}</td><td class="rate-cell">${fmtRate(Math.max(0, pureContract), Math.max(1, pureDb))}</td>`;
         html += `<td>${rankChangeHtml(rank, p.name)}</td>`;
         html += `</tr>`;
 
@@ -2772,12 +2775,12 @@ async function tryBuildTab4() {
 
       html += `<tr class="total-row">`;
       html += `<td colspan="5" style="text-align:right;">합계</td>`;
-      html += `<td>${totals.todayDb}</td><td>${totals.todayDailyContract}</td><td>${totals.todayActualContract}</td><td class="rate-cell">${fmtRate(totals.todayActualContract, totals.todayDb)}</td>`;
-      html += `<td>${totals.cumDbNonIN}</td><td>${totals.cumCancelNonIN}</td><td>${totals.cumContractNonIN}</td>`;
-      html += `<td>${totals.cumDbIN}</td><td>${totals.cumCancelIN}</td><td>${totals.cumContractIN}</td>`;
-      html += `<td>${totals.cumContractAll}</td><td class="rate-cell">${fmtRate(totals.cumContractAll, totals.cumDbAll)}</td>`;
-      html += `<td>${totals.holDb}</td><td>${totals.holDailyContract}</td><td>${totals.holActualContract}</td><td class="rate-cell">${fmtRate(totals.holActualContract, totals.holDb)}</td>`;
-      html += `<td>${Math.max(0, tPureDb)}</td><td>${Math.max(0, tPureContract)}</td><td class="rate-cell">${fmtRate(Math.max(0, tPureContract), Math.max(1, tPureDb))}</td>`;
+      html += `<td>${fmtNum(totals.todayDb)}</td><td>${fmtNum(totals.todayDailyContract)}</td><td>${fmtNum(totals.todayActualContract)}</td><td class="rate-cell">${fmtRate(totals.todayActualContract, totals.todayDb)}</td>`;
+      html += `<td>${fmtNum(totals.cumDbNonIN)}</td><td>${fmtNum(totals.cumCancelNonIN)}</td><td>${fmtNum(totals.cumContractNonIN)}</td>`;
+      html += `<td>${fmtNum(totals.cumDbIN)}</td><td>${fmtNum(totals.cumCancelIN)}</td><td>${fmtNum(totals.cumContractIN)}</td>`;
+      html += `<td>${fmtNum(totals.cumContractAll)}</td><td class="rate-cell">${fmtRate(totals.cumContractAll, totals.cumDbAll)}</td>`;
+      html += `<td>${fmtNum(totals.holDb)}</td><td>${fmtNum(totals.holDailyContract)}</td><td>${fmtNum(totals.holActualContract)}</td><td class="rate-cell">${fmtRate(totals.holActualContract, totals.holDb)}</td>`;
+      html += `<td>${fmtNum(Math.max(0, tPureDb))}</td><td>${fmtNum(Math.max(0, tPureContract))}</td><td class="rate-cell">${fmtRate(Math.max(0, tPureContract), Math.max(1, tPureDb))}</td>`;
       html += `<td></td>`;
       html += `</tr>`;
 
@@ -3495,6 +3498,11 @@ function buildAccSheet(groupedData, dateLabel, tab) {
           else if (val.includes('▼')) cell.s.font = { bold: true, color: { rgb: 'C62828' }, sz: 10 };
           else cell.s.font = { color: { rgb: 'BBBBBB' }, sz: 10 };
         }
+      }
+      // 숫자 셀 천 단위 콤마 (rate/순위 제외)
+      if ((meta.type === 'data' || meta.type === 'total' || meta.type === 'grandtotal')
+          && typeof cell.v === 'number' && !rateCols.has(c) && c !== 1) {
+        cell.z = '#,##0';
       }
     }
   }
