@@ -101,6 +101,8 @@
   .storage-row button:hover { background: #f5f5f5; }
   .storage-row button.danger { color: #ea4335; border-color: #ea4335; }
   .storage-row button.danger:hover { background: #fde7e9; }
+  .storage-row button.btn-icon { padding: 3px 6px; font-size: 13px; line-height: 1; border-radius: 5px; }
+  .storage-row button.btn-icon.danger { color: #ea4335; border-color: #ea4335; }
 
   /* 최하단 배치 드롭다운 */
   .bottom-pin-section { padding: 12px 0; border-top: 1px solid #eee; margin-top: 8px; }
@@ -465,13 +467,11 @@
         <input type="file" accept=".xlsx,.xls" id="fileContract">
       </div>
     </div>
-    <div class="storage-row" style="justify-content:space-between;">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;min-width:0;">
-        <span class="storage-label">저장 현황:</span>
-        <span class="storage-dates" id="storageDates" style="font-size:12px;">없음</span>
-        <button onclick="refreshStorageDisplay()">새로고침</button>
-      </div>
-      <button class="danger" onclick="clearStorage()">전체 초기화</button>
+    <div class="storage-row" style="flex-wrap:nowrap;">
+      <span class="storage-label" style="flex-shrink:0;">저장 현황:</span>
+      <span class="storage-dates" id="storageDates" style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">없음</span>
+      <button class="btn-icon" onclick="refreshStorageDisplay()" title="새로고침">🔄</button>
+      <button class="btn-icon danger" onclick="clearStorage()" title="전체 초기화">🗑</button>
     </div>
     <div class="storage-row" style="justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:8px;">
