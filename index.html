@@ -1275,13 +1275,23 @@ async function refreshStorageDisplay() {
     const dates = keys.sort();
     const el = document.getElementById('storageDates');
     const parts = [];
-    parts.push(rosterKeys.length > 0 ? `명단 ${rosterKeys.sort().join(', ')}` : '명단 X');
+    if (rosterKeys.length > 0) {
+      const rs = rosterKeys.slice().sort();
+      parts.push(`명단 ${rs.length}개월 (${rs[0]}~${rs[rs.length-1]})`);
+    } else {
+      parts.push('명단 X');
+    }
     if (dates.length > 0) {
       parts.push(`DB ${dates.length}일 (${dates[0]}~${dates[dates.length-1]})`);
     } else {
       parts.push('DB X');
     }
-    parts.push(contractKeys.length > 0 ? `계약 ${contractKeys.sort().join(', ')}` : '계약 X');
+    if (contractKeys.length > 0) {
+      const cs = contractKeys.slice().sort();
+      parts.push(`계약 ${cs.length}개월 (${cs[0]}~${cs[cs.length-1]})`);
+    } else {
+      parts.push('계약 X');
+    }
     el.textContent = parts.join(' | ');
   } catch {
     document.getElementById('storageDates').textContent = '(읽기 오류)';
