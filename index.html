@@ -487,16 +487,19 @@
       <div id="accDatesList" style="font-size:12px;color:#666;display:flex;flex-direction:column;gap:4px;"></div>
     </div>
     <div class="storage-row" style="flex-direction:column;align-items:stretch;gap:8px;">
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;" onclick="toggleSnapshotRestore()">
+        <span id="snapshotRestoreCaret" style="display:inline-block;transition:transform 0.2s;font-size:10px;color:#888;">▶</span>
         <span class="storage-label">📸 스냅샷 복원:</span>
         <span style="font-size:11px;color:#888;">날짜별 계약 파일로 과거 스냅샷을 복원합니다</span>
       </div>
-      <div style="font-size:11px;color:#999;line-height:1.5;">파일명 끝에 날짜를 붙여주세요: <code>신청자관리_2604_0401.xlsx</code>, <code>신청자관리_2604_0402.xlsx</code> ...</div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input type="file" id="fileSnapshotRestore" accept=".xlsx,.xls" multiple style="font-size:12px;">
-        <button id="btnSnapshotRestore" onclick="restoreSnapshots()" style="white-space:nowrap;">복원 실행</button>
+      <div id="snapshotRestoreBody" style="display:none;flex-direction:column;gap:8px;">
+        <div style="font-size:11px;color:#999;line-height:1.5;">파일명 끝에 날짜를 붙여주세요: <code>신청자관리_2604_0401.xlsx</code>, <code>신청자관리_2604_0402.xlsx</code> ...</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="file" id="fileSnapshotRestore" accept=".xlsx,.xls" multiple style="font-size:12px;">
+          <button id="btnSnapshotRestore" onclick="restoreSnapshots()" style="white-space:nowrap;">복원 실행</button>
+        </div>
+        <div id="snapshotRestoreStatus" style="font-size:12px;color:#666;"></div>
       </div>
-      <div id="snapshotRestoreStatus" style="font-size:12px;color:#666;"></div>
     </div>
     <div class="bottom-pin-section">
       <div class="section-title">📌 최하단 고정 배치 <span class="pin-desc">선택된 인원은 성과와 무관하게 해당 그룹 최하단에 배치됩니다</span></div>
@@ -4084,6 +4087,20 @@ async function loadSharedData() {
   } catch(e) {
     console.error('loadSharedData 오류:', e);
     return false;
+  }
+}
+
+// ── 스냅샷 복원 섹션 토글 ──
+function toggleSnapshotRestore() {
+  const body = document.getElementById('snapshotRestoreBody');
+  const caret = document.getElementById('snapshotRestoreCaret');
+  const isOpen = body.style.display !== 'none';
+  if (isOpen) {
+    body.style.display = 'none';
+    caret.style.transform = 'rotate(0deg)';
+  } else {
+    body.style.display = 'flex';
+    caret.style.transform = 'rotate(90deg)';
   }
 }
 
