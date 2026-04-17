@@ -63,6 +63,7 @@
   .badge-accumulate { background: #e8f0fe; color: #1a73e8; border: 1px solid #1a73e844; }
   .upload-box .status { font-size: 11px; color: #34a853; font-weight: 600; margin-top: 4px; display: none; }
   .upload-box.loaded .status { display: block; }
+  .upload-box.loaded .status.status-inline { display: inline-block; margin: 0 0 0 6px; }
   .upload-box .progress-bar { width: 100%; height: 6px; background: #e8eaed; border-radius: 3px; margin-top: 8px; overflow: hidden; display: none; position: relative; }
   .upload-box .progress-bar.active { display: block; }
   .upload-box .progress-fill { height: 100%; background: linear-gradient(90deg, #4285f4, #1a73e8); border-radius: 3px; transition: width 0.4s cubic-bezier(.4,0,.2,1); width: 0%; position: relative; }
@@ -79,7 +80,11 @@
   .upload-box .btn-clear:hover { color: #ea4335; background: #fde7e9; }
 
   /* File list inside upload box */
-  .file-list { margin-top: 8px; text-align: left; max-height: 63px; overflow-y: auto; position: relative; z-index: 2; }
+  .file-list { margin-top: 8px; text-align: left; position: relative; z-index: 2; }
+  .file-list-rest { max-height: 120px; overflow-y: auto; }
+  .btn-file-toggle { background: none; border: none; color: #1a73e8; font-size: 11px; cursor: pointer; padding: 3px 0; margin-top: 2px; display: inline-flex; align-items: center; gap: 4px; }
+  .btn-file-toggle:hover { text-decoration: underline; }
+  .file-toggle-caret { display: inline-block; transition: transform 0.15s; font-size: 9px; color: #888; }
   .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
   .file-item { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; color: #333; }
   .file-item .file-icon { color: #34a853; font-size: 13px; }
@@ -429,8 +434,7 @@
         <button class="btn-clear" onclick="clearRoster(event)" title="명단 초기화">✕</button>
         <div class="icon">👥</div>
         <div class="upload-info">
-          <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>명단 파일 <span class="sub">WM_근태보고_그룹_yyyymm.xls</span></div>
-          <div class="status" id="rosterStatus"></div>
+          <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>명단 파일 <span class="sub">WM_근태보고_그룹_yyyymm.xls</span><span class="status status-inline" id="rosterStatus"></span></div>
           <div class="file-list" id="rosterFileList"></div>
           <div class="progress-bar" id="progressRoster"><div class="progress-fill"></div></div>
           <div class="progress-label" id="progressRosterLabel"></div>
@@ -453,8 +457,7 @@
         <button class="btn-clear" onclick="clearContract(event)" title="계약수 초기화">✕</button>
         <div class="icon">📋</div>
         <div class="upload-info">
-          <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>계약수 파일 (월 누적) <span class="sub">신청자관리_yyyymm.xlsx</span></div>
-          <div class="status" id="contractStatus"></div>
+          <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>계약수 파일 (월 누적) <span class="sub">신청자관리_yyyymm.xlsx</span><span class="status status-inline" id="contractStatus"></span></div>
           <div class="file-list" id="contractFileList"></div>
           <div class="progress-bar" id="progressContract"><div class="progress-fill"></div></div>
           <div class="progress-label" id="progressContractLabel"></div>
@@ -1581,10 +1584,29 @@ function renderFileList(type, files) {
   const delFn = type === 'db' ? 'deleteDbFileEntry' : 'deleteFileEntry';
   // 최신 업로드가 위로 오도록 역순 표시
   const reversed = files.map((f, i) => ({ f, origIdx: i })).reverse();
-  el.innerHTML = reversed.map(({ f, origIdx }) => {
+  const itemHtml = ({ f, origIdx }) => {
     const delBtn = `<button class="btn-file-del" onclick="${delFn}('${type}', ${origIdx})" title="이 파일 삭제">✕</button>`;
     return `<div class="file-item"><span class="file-icon">✓</span><span class="file-name">${f.name}</span><span class="file-count">${Number(f.count).toLocaleString()}건</span>${delBtn}</div>`;
-  }).join('');
+  };
+  let html = itemHtml(reversed[0]);
+  const rest = reversed.slice(1);
+  if (rest.length > 0) {
+    html += `<button class="btn-file-toggle" onclick="toggleFileListRest('${type}')">` +
+      `<span class="file-toggle-caret" id="${type}FileListCaret">▶</span>이전 파일 ${rest.length}개 보기</button>` +
+      `<div class="file-list-rest" id="${type}FileListRest" style="display:none;">` +
+      rest.map(itemHtml).join('') +
+      `</div>`;
+  }
+  el.innerHTML = html;
+}
+
+function toggleFileListRest(type) {
+  const rest = document.getElementById(`${type}FileListRest`);
+  const caret = document.getElementById(`${type}FileListCaret`);
+  if (!rest) return;
+  const isOpen = rest.style.display !== 'none';
+  rest.style.display = isOpen ? 'none' : 'block';
+  if (caret) caret.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
 }
 
 // 명단/계약수 개별 파일 삭제
@@ -1640,7 +1662,7 @@ async function deleteFileEntry(type, index) {
         document.getElementById('contractStatus').textContent = '';
       } else {
         const months = Object.keys(contractByMonth).sort();
-        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (저장됨, ${months.join(', ')})`;
+        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (저장됨, ${months.length}개월)`;
       }
     }
     db.close();
@@ -1793,7 +1815,7 @@ async function loadSavedFiles() {
       contractData = mergeAllContracts();
       document.getElementById('uploadContract').classList.add('loaded');
       const months = Object.keys(contractByMonth).sort();
-      document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (저장됨, ${months.join(', ')})`;
+      document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (저장됨, ${months.length}개월)`;
     }
 
     if (rosterMap && contractData) {
@@ -1961,7 +1983,7 @@ document.getElementById('fileContract').addEventListener('change', e => {
     contractData = mergeAllContracts();
     document.getElementById('uploadContract').classList.add('loaded');
     const months = Object.keys(contractByMonth).sort();
-    document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (${months.join(', ')})`;
+    document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (${months.length}개월)`;
     showStatus(`계약수 로드: ${data.length.toLocaleString()}건 → ${monthKey} (자동 저장됨)`, 'success');
     await refreshStorageDisplay();
     fileJustUploaded = true;
@@ -3989,7 +4011,7 @@ async function loadSharedData() {
       if (contractData) {
         document.getElementById('uploadContract').classList.add('loaded');
         const months = Object.keys(contractByMonth).sort();
-        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터, ${months.join(', ')})`;
+        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터, ${months.length}개월)`;
       }
     }
 
@@ -4252,7 +4274,7 @@ async function refreshFromRemoteIfNeeded() {
       if (contractData) {
         document.getElementById('uploadContract').classList.add('loaded');
         const months = Object.keys(contractByMonth).sort();
-        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터, ${months.join(', ')})`;
+        document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (공유 데이터, ${months.length}개월)`;
       }
     }
 
