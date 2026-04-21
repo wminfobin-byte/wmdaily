@@ -2392,7 +2392,7 @@ async function tryBuildTab4() {
 
   // 조회 종료월 기준 명단 선택
   const queryEndDate = dateEnd || (accDates.length > 0 ? accDates[accDates.length-1] : null);
-  const activeRoster = getRosterForDate(queryEndDate);
+  let activeRoster = getRosterForDate(queryEndDate);
 
   // 전월 명단 (그룹 변동 비교용)
   let prevMonthRoster = null;
@@ -2450,15 +2450,23 @@ async function tryBuildTab4() {
   const _snapMainRaw = _snapEnd ? localStorage.getItem(getAccStorageKey('main', _snapEnd)) : null;
   const _snapTalkisRaw = _snapEnd ? localStorage.getItem(getAccStorageKey('talkis', _snapEnd)) : null;
   // 최신 날짜(=오늘 데이터)는 항상 라이브 계산 (업로드 직후 반영 위해)
-  const _isLatestDate = _snapEnd === globalLatestDate || _snapEnd === latestDate;
+  const _isLatestDate = _snapEnd === globalLatestDate;
   const useSnapshot = _snapMainRaw && _snapTalkisRaw && !_isLatestDate;
 
   if (useSnapshot) {
     console.log('[tryBuildTab4] 스냅샷 사용:', _snapEnd);
+    lastBuildDebug = {};
     const snapMain = JSON.parse(_snapMainRaw); delete snapMain._dateLabel;
     const snapTalkis = JSON.parse(_snapTalkisRaw); delete snapTalkis._dateLabel;
+    // 시점 명단 복원: 스냅샷의 group/center/team/hireDate로 activeRoster 재구성
+    const snapRoster = new Map();
+    const snapPrevRoster = new Map();
     for (const persons of Object.values(snapMain).concat(Object.values(snapTalkis))) {
       for (const p of persons) {
+        snapRoster.set(p.name, {
+          group: p.group, center: p.center, team: p.team, hireDate: p.hireDate,
+        });
+        if (p.prevGroup) snapPrevRoster.set(p.name, { group: p.prevGroup });
         personStats.set(p.name, {
           todayDb: p.todayDb || 0, todayDbNonIN: p.todayDbNonIN || 0,
           todayDailyContract: p.todayDailyContract || 0, todayActualContract: p.todayActualContract || 0,
@@ -2471,6 +2479,8 @@ async function tryBuildTab4() {
         });
       }
     }
+    activeRoster = snapRoster;
+    prevMonthRoster = snapPrevRoster.size > 0 ? snapPrevRoster : prevMonthRoster;
   } else {
   console.log('[tryBuildTab4] 라이브 계산:', _snapEnd);
   for (const [date, dayData] of Object.entries(acc.dates)) {
@@ -2530,7 +2540,9 @@ async function tryBuildTab4() {
       isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
     }
 
-    const s = getStats(manager);
+    // 퇴사 처리로 manager가 "(종료)XXX"로 변경된 경우, keyMeta.p(DB 당시 obName)를 원본 이름으로 사용
+    const canonicalName = (meta && meta.p && activeRoster.has(meta.p)) ? meta.p : manager;
+    const s = getStats(canonicalName);
 
     if (!isCancelled) {
       if (isIN) s.cumContractIN++;
@@ -2541,8 +2553,8 @@ async function tryBuildTab4() {
         if (is일계약) s.holDailyContract++;  // 일계약수: IN 포함
         if (!isIN) s.holActualContract++;     // 실계약수: IN 제외
         // 디버그 기록
-        if (!lastBuildDebug[manager]) lastBuildDebug[manager] = { holDetails: [] };
-        lastBuildDebug[manager].holDetails.push({ custKey, distDate: distDateForHol, appDate: appDateStr, type: is일계약 ? '일계약' : '이전계약', cancelled: false, isIN });
+        if (!lastBuildDebug[canonicalName]) lastBuildDebug[canonicalName] = { holDetails: [] };
+        lastBuildDebug[canonicalName].holDetails.push({ custKey, distDate: distDateForHol, appDate: appDateStr, type: is일계약 ? '일계약' : '이전계약', cancelled: false, isIN });
       }
       if (appDateStr === latestDate) {
         s.todayActualContract++;
@@ -2555,8 +2567,8 @@ async function tryBuildTab4() {
       else s.cumCancelNonIN++;
       // 취소 건도 휴일이면 디버그에 기록
       if (isHolContract) {
-        if (!lastBuildDebug[manager]) lastBuildDebug[manager] = { holDetails: [] };
-        lastBuildDebug[manager].holDetails.push({ custKey, distDate: distDateForHol, appDate: appDateStr, type: is일계약 ? '일계약' : '이전계약', cancelled: true, isIN });
+        if (!lastBuildDebug[canonicalName]) lastBuildDebug[canonicalName] = { holDetails: [] };
+        lastBuildDebug[canonicalName].holDetails.push({ custKey, distDate: distDateForHol, appDate: appDateStr, type: is일계약 ? '일계약' : '이전계약', cancelled: true, isIN });
       }
     }
   });
@@ -3144,6 +3156,8 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
     const categoryVal = String(ctRow[CT_COL.category] || '').trim();
     const isIN = categoryVal === '';
     const meta = acc.keyMeta[custKey];
+    // 퇴사 처리로 manager가 "(종료)XXX"로 변경된 경우, keyMeta.p(DB 당시 obName)를 원본 이름으로 사용
+    const canonicalName = (meta && meta.p && activeRoster.has(meta.p)) ? meta.p : manager;
     let is일계약 = false;
     if (meta) {
       is일계약 = meta.el === 1 && (appDateStr === meta.d);
@@ -3169,7 +3183,7 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
       const queryMonth = targetDate.slice(0, 7);
       isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
     }
-    const s = getStats(manager);
+    const s = getStats(canonicalName);
     if (!isCancelled) {
       if (isIN) s.cumContractIN++; else s.cumContractNonIN++;
       s.cumContractAll++;
