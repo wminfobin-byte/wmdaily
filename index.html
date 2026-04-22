@@ -222,6 +222,10 @@
   .filter-search { padding: 4px 10px; margin: 4px 8px 6px; }
   .filter-search input { width: 100%; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; outline: none; }
   .filter-search input:focus { border-color: #1a73e8; }
+  .include-resigned { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: #555; cursor: pointer; white-space: nowrap; padding: 4px 8px; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+  .include-resigned:hover { border-color: #1a73e8; color: #1a73e8; }
+  .include-resigned input { cursor: pointer; margin: 0; }
+  .include-resigned.checked { background: #e3f2fd; border-color: #1a73e8; color: #1a73e8; font-weight: 600; }
 
   /* KPI cards */
   .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -599,6 +603,11 @@
           <button class="filter-dropdown-btn" onclick="toggleFilterPanel(this)"><span class="count-badge">전체</span> ▾</button>
           <div class="filter-panel" id="filterPanelPerson"></div>
         </div>
+        <div class="filter-divider"></div>
+        <label class="include-resigned" id="includeResignedLabel">
+          <input type="checkbox" id="includeResigned" onchange="onIncludeResignedChange(this)">
+          <span>퇴사자 포함</span>
+        </label>
       </div>
       <div class="kpi-row-label" id="kpiFilteredLabel">조회 기간</div>
       <div class="kpi-row">
@@ -2322,6 +2331,12 @@ function onFilterChange(panelId) {
   tryBuildTab4();
 }
 
+function onIncludeResignedChange(cb) {
+  const label = document.getElementById('includeResignedLabel');
+  if (label) label.classList.toggle('checked', cb.checked);
+  tryBuildTab4();
+}
+
 function getSelectedFilters() {
   const getChecked = (panelId) => {
     const panel = document.getElementById(panelId);
@@ -2392,7 +2407,73 @@ async function tryBuildTab4() {
 
   // 조회 종료월 기준 명단 선택
   const queryEndDate = dateEnd || (accDates.length > 0 ? accDates[accDates.length-1] : null);
-  let activeRoster = getRosterForDate(queryEndDate);
+  const includeResigned = document.getElementById('includeResigned')?.checked;
+  // 명단 이름의 "(XX센터)이름" 접두어 제거 — 계약 파일의 매니저/DB의 obName은 접두어 없는 경우가 있음
+  const stripPrefix = (name) => String(name || '').replace(/^\([^)]+\)/, '').trim();
+  let activeRoster;
+  if (includeResigned) {
+    // 퇴사자 포함: 현재 명단 + 조회 기간 내 DB/계약 데이터에 등장하는 퇴사자 추가
+    const months = Object.keys(rosterByMonth).sort();
+    const lookupInfo = (name) => {
+      for (let i = months.length - 1; i >= 0; i--) {
+        if (rosterByMonth[months[i]].has(name)) return rosterByMonth[months[i]].get(name);
+      }
+      return null;
+    };
+    const merged = new Map();
+    // 1) 조회 기간에 걸친 월별 명단 통합 (최근 월 정보 우선)
+    const startMonth = dateStart ? dateStart.slice(0, 7) : (months[0] || '');
+    const endMonth = queryEndDate ? queryEndDate.slice(0, 7) : (months[months.length - 1] || '');
+    for (const m of months) {
+      if (startMonth && m < startMonth) continue;
+      if (endMonth && m > endMonth) continue;
+      rosterByMonth[m].forEach((info, name) => merged.set(name, info));
+    }
+    // 접두어 제거 기준 중복 방지: "추정민"이 들어왔을 때 "(R_노원)추정민"이 이미 있으면 제외
+    const existsBySuffix = (bareName) => {
+      const bare = stripPrefix(bareName);
+      if (!bare) return false;
+      for (const fullName of merged.keys()) {
+        if (stripPrefix(fullName) === bare) return true;
+      }
+      return false;
+    };
+    // 2) 조회 기간 내 DB 데이터에 등장하지만 명단에 없는 이름 = 퇴사자
+    for (const date of accDates) {
+      const dayData = acc.dates[date];
+      if (!dayData || !dayData.persons) continue;
+      for (const name of Object.keys(dayData.persons)) {
+        if (merged.has(name)) continue;
+        if (existsBySuffix(name)) continue; // 접두어 차이만 있는 동일 인물이 이미 명단에 있음
+        const info = lookupInfo(name);
+        merged.set(name, { ...(info || { group: '퇴사자', center: '-', team: '-', hireDate: '' }), isResigned: true });
+      }
+    }
+    // 3) 조회 기간 내 계약 데이터의 "(종료)XXX" 매니저
+    contractData.forEach(ctRow => {
+      const mgr = String(ctRow[CT_COL.manager] || '').trim();
+      if (!mgr) return;
+      const appDate = datePart(ctRow[CT_COL.applicationDate]);
+      if (appDate && dateStart && appDate < dateStart) return;
+      if (appDate && dateEnd && appDate > dateEnd) return;
+      const isEnded = mgr.startsWith('(종료)');
+      const origName = isEnded ? mgr.replace(/^\(종료\)/, '').trim() : mgr;
+      if (!origName || merged.has(origName)) return;
+      if (existsBySuffix(origName)) return; // 현직자(접두어 포함)와 동일 인물
+      const info = lookupInfo(origName);
+      if (info) merged.set(origName, { ...info, isResigned: true });
+      else if (isEnded) merged.set(origName, { group: '퇴사자', center: '-', team: '-', hireDate: '', isResigned: true });
+    });
+    activeRoster = merged.size > 0 ? merged : getRosterForDate(queryEndDate);
+  } else {
+    activeRoster = getRosterForDate(queryEndDate);
+  }
+  // 접두어 제거 → 실제 명단 full name 역매핑 (계약 매니저가 접두어 없는 경우 원본 매칭용)
+  const activeRosterByStripped = new Map();
+  activeRoster.forEach((_, fullName) => {
+    const s = stripPrefix(fullName);
+    if (s && s !== fullName && !activeRosterByStripped.has(s)) activeRosterByStripped.set(s, fullName);
+  });
 
   // 전월 명단 (그룹 변동 비교용)
   let prevMonthRoster = null;
@@ -2541,7 +2622,20 @@ async function tryBuildTab4() {
     }
 
     // 퇴사 처리로 manager가 "(종료)XXX"로 변경된 경우, keyMeta.p(DB 당시 obName)를 원본 이름으로 사용
-    const canonicalName = (meta && meta.p && activeRoster.has(meta.p)) ? meta.p : manager;
+    let canonicalName;
+    if (meta && meta.p && activeRoster.has(meta.p)) {
+      canonicalName = meta.p;
+    } else if (manager.startsWith('(종료)')) {
+      const stripped = manager.replace(/^\(종료\)/, '').trim();
+      if (activeRoster.has(stripped)) canonicalName = stripped;
+      else if (activeRosterByStripped.has(stripped)) canonicalName = activeRosterByStripped.get(stripped);
+      else canonicalName = manager;
+    } else if (activeRosterByStripped.has(manager)) {
+      // 접두어 없는 매니저 이름이 명단의 "(XX)이름"과 매칭되면 명단 full name으로 통합
+      canonicalName = activeRosterByStripped.get(manager);
+    } else {
+      canonicalName = manager;
+    }
     const s = getStats(canonicalName);
 
     if (!isCancelled) {
@@ -2596,8 +2690,11 @@ async function tryBuildTab4() {
     const g = info.group;
     const prevInfo = prevMonthRoster ? prevMonthRoster.get(name) : null;
     const prevGroup = prevInfo ? prevInfo.group : null;
-    // 신규 입사자(이전 명단에 없던 인원): IN+휴일 제외 계약수 1건 이상이어야 리스트업
-    if (!prevGroup && prevMonthRoster) {
+    // 퇴사자: 데이터가 있으면 무조건 리스트업
+    if (info.isResigned) {
+      if (stats.cumDbAll <= 0 && stats.cumContractAll <= 0) return;
+    } else if (!prevGroup && prevMonthRoster) {
+      // 신규 입사자(이전 명단에 없던 인원): IN+휴일 제외 계약수 1건 이상이어야 리스트업
       const pureContract = stats.cumContractNonIN - stats.holActualContract;
       if (pureContract < 1) return;
     }
