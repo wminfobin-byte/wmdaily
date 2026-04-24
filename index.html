@@ -4590,13 +4590,13 @@ async function migrateV6vi25() {
   await loadSavedFiles().catch(() => {});
 
   if (rosterMap && contractData) {
-    // 로컬에서 로드 성공 → 빠진 날짜 누적 데이터 보충
-    showLoading(90, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '누적 데이터 확인 중...');
+    // 로컬에서 로드 성공 → 원격이 더 최신이면 재빌드 (렌더 전에 reconcile)
+    showLoading(85, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '최신 데이터 확인 중...');
+    try { await refreshFromRemoteIfNeeded(); } catch(e) { console.warn('원격 갱신 오류:', e); }
+    showLoading(95, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '누적 데이터 확인 중...');
     try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
     showLoading(100, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '완료');
     hideLoading();
-    // 백그라운드에서 GitHub 최신 데이터 확인 + 자동 갱신
-    refreshFromRemoteIfNeeded();
   } else {
     // 로컬 데이터 없음 → 공유 데이터 시도
     showLoading(0, '공유 데이터를 불러오는 중입니다…<br><small style="color:#888;">데이터 크기에 따라 시간이 걸릴 수 있습니다.</small>', '서버 연결 중...');
