@@ -149,6 +149,7 @@
   .quick-nav-btn.qn-w:hover, .quick-nav-btn.qn-w.active { color: #fff; background: #1565c0; box-shadow: 0 2px 8px rgba(21,101,192,0.35); }
   .quick-nav-btn.qn-e:hover, .quick-nav-btn.qn-e.active { color: #fff; background: #1e88e5; box-shadow: 0 2px 8px rgba(30,136,229,0.35); }
   .quick-nav-btn.qn-n:hover, .quick-nav-btn.qn-n.active { color: #fff; background: #42a5f5; box-shadow: 0 2px 8px rgba(66,165,245,0.35); }
+  .quick-nav-btn.qn-eng:hover, .quick-nav-btn.qn-eng.active { color: #fff; background: #1565c0; box-shadow: 0 2px 8px rgba(21,101,192,0.35); }
   .quick-nav-btn.qn-lang:hover, .quick-nav-btn.qn-lang.active { color: #fff; background: #66bb6a; box-shadow: 0 2px 8px rgba(102,187,106,0.35); }
   .quick-nav-btn.active { transform: scale(1.02); }
 
@@ -159,6 +160,7 @@
   .group-header.w-group { background: #1565c0; }
   .group-header.e-group { background: #1e88e5; }
   .group-header.n-group { background: #42a5f5; }
+  .group-header.eng-group { background: #1565c0; }
   .group-header.lang-group { background: #81c784; color: #fff; }
   .group-header.talkis-group { background: #b39ddb; color: #fff; }
 
@@ -635,12 +637,7 @@
     <div class="tab-bar" id="tabBar">
       <button class="tab-btn active" onclick="switchTab('main', this)">뇌새김</button>
       <button class="tab-btn" onclick="switchTab('talkis', this)">톡이즈</button>
-      <div class="quick-nav" id="quickNav">
-        <button class="quick-nav-btn qn-w" data-group="W그룹">W그룹</button>
-        <button class="quick-nav-btn qn-e" data-group="E그룹">E그룹</button>
-        <button class="quick-nav-btn qn-n" data-group="N그룹">N그룹</button>
-        <button class="quick-nav-btn qn-lang" data-group="제2외국어">제2외국어</button>
-      </div>
+      <div class="quick-nav" id="quickNav"></div>
       <div class="tab-actions">
         <button class="btn-download dl-png" onclick="downloadPng('eng')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg> PNG(영어)</button>
         <button class="btn-download dl-png" onclick="downloadPng('lang')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg> PNG(제2외국어)</button>
@@ -904,7 +901,7 @@ function populateBottomPinList() {
     return;
   }
   // 그룹별로 정리
-  const groupOrder = ['W그룹', 'E그룹', 'N그룹', '제2외국어', '톡이즈'];
+  const groupOrder = ['W그룹', 'E그룹', 'N그룹', '영어', '제2외국어', '톡이즈'];
   const byGroup = {};
   rosterMap.forEach((info, name) => {
     const g = info.group || '기타';
@@ -971,6 +968,21 @@ document.getElementById('quickNav').addEventListener('click', (e) => {
     }
   }
 });
+
+// ── Quick-nav: render buttons for visible groups only ──
+function populateQuickNav(groupedMain) {
+  const qn = document.getElementById('quickNav');
+  if (!qn) return;
+  const order = ['W그룹', 'E그룹', 'N그룹', '영어', '제2외국어'];
+  const cls = { 'W그룹':'qn-w', 'E그룹':'qn-e', 'N그룹':'qn-n', '영어':'qn-eng', '제2외국어':'qn-lang' };
+  let html = '';
+  for (const g of order) {
+    const persons = groupedMain && groupedMain.get(g);
+    if (!persons || persons.length === 0) continue;
+    html += `<button class="quick-nav-btn ${cls[g]}" data-group="${g}">${g}</button>`;
+  }
+  qn.innerHTML = html;
+}
 
 // ── Quick-nav: scroll spy ──
 let qnSpyObserver = null;
@@ -1813,7 +1825,7 @@ async function loadSavedFiles() {
     if (rosterEntries.length > 0) {
       rosterByMonth = {};
       for (const [monthKey, rows] of rosterEntries) {
-        rosterByMonth[monthKey] = parseRosterRows(rows);
+        rosterByMonth[monthKey] = parseRosterRows(rows, monthKey);
       }
       // Use latest month as active roster
       const latestMonth = Object.keys(rosterByMonth).sort().pop();
@@ -1851,7 +1863,10 @@ async function loadSavedFiles() {
 // ══════════════════════════════════════════════
 // ── Roster Parsing ──
 // ══════════════════════════════════════════════
-function parseRosterRows(rows) {
+// 2026-05-01부터 W/E/N 그룹 → 단일 "영어" 그룹으로 통합
+const UNIFIED_ENG_FROM = '2026-05';
+function parseRosterRows(rows, monthKey) {
+  const useUnifiedEng = monthKey && monthKey >= UNIFIED_ENG_FROM;
   const map = new Map();
   rows.forEach(row => {
     const name = String(row[ROSTER_COL.name] || '').trim();
@@ -1871,8 +1886,13 @@ function parseRosterRows(rows) {
     if (role === '제2외국어' || role === '톡이즈') {
       group = role;
     } else if (role === '뇌새김영어') {
-      if (groupRaw === 'A그룹') group = 'N그룹';
-      else group = groupRaw;
+      if (useUnifiedEng) {
+        group = '영어';
+      } else if (groupRaw === 'A그룹') {
+        group = 'N그룹';
+      } else {
+        group = groupRaw;
+      }
     } else {
       group = groupRaw || role || '미분류';
     }
@@ -1943,7 +1963,7 @@ document.getElementById('fileRoster').addEventListener('change', e => {
   if (!file) return;
   const monthKey = extractMonthKey(file.name);
   readExcel(file, async data => {
-    const parsed = parseRosterRows(data);
+    const parsed = parseRosterRows(data, monthKey);
     rosterByMonth[monthKey] = parsed;
     await saveRosterToDB(monthKey, data);
     await saveFileMeta('roster', `${file.name} (${monthKey})`, parsed.size);
@@ -2272,7 +2292,7 @@ function populateFilters() {
     panel.innerHTML = html;
   };
 
-  const groupOrder = ['W그룹', 'E그룹', 'N그룹', '제2외국어', '톡이즈'];
+  const groupOrder = ['W그룹', 'E그룹', 'N그룹', '영어', '제2외국어', '톡이즈'];
   const sortedGroups = [...groups].sort((a, b) => {
     const ia = groupOrder.indexOf(a), ib = groupOrder.indexOf(b);
     return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
@@ -2621,15 +2641,17 @@ async function tryBuildTab4() {
       isHolContract = isHoliday(distDateForHol) && distMonth === queryMonth;
     }
 
-    // 퇴사 처리로 manager가 "(종료)XXX"로 변경된 경우, keyMeta.p(DB 당시 obName)를 원본 이름으로 사용
+    // 계약 담당자(N열) 우선. 단, 퇴사 처리로 manager가 "(종료)XXX"가 된 경우에만 keyMeta.p(DB 당시 obName)로 복원
     let canonicalName;
-    if (meta && meta.p && activeRoster.has(meta.p)) {
-      canonicalName = meta.p;
-    } else if (manager.startsWith('(종료)')) {
-      const stripped = manager.replace(/^\(종료\)/, '').trim();
-      if (activeRoster.has(stripped)) canonicalName = stripped;
-      else if (activeRosterByStripped.has(stripped)) canonicalName = activeRosterByStripped.get(stripped);
-      else canonicalName = manager;
+    if (manager.startsWith('(종료)')) {
+      if (meta && meta.p && activeRoster.has(meta.p)) {
+        canonicalName = meta.p;
+      } else {
+        const stripped = manager.replace(/^\(종료\)/, '').trim();
+        if (activeRoster.has(stripped)) canonicalName = stripped;
+        else if (activeRosterByStripped.has(stripped)) canonicalName = activeRosterByStripped.get(stripped);
+        else canonicalName = manager;
+      }
     } else if (activeRosterByStripped.has(manager)) {
       // 접두어 없는 매니저 이름이 명단의 "(XX)이름"과 매칭되면 명단 full name으로 통합
       canonicalName = activeRosterByStripped.get(manager);
@@ -2677,7 +2699,7 @@ async function tryBuildTab4() {
   }
 
   // ── Group by activeRoster ──
-  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
+  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '영어', '제2외국어'];
   const talkisGroups = ['톡이즈'];
   const groupedMain = new Map();
   const groupedTalkis = new Map();
@@ -2784,7 +2806,7 @@ async function tryBuildTab4() {
   // ── Render helper ──
   const groupColors = {
     'W그룹': 'w-group', 'E그룹': 'e-group', 'N그룹': 'n-group',
-    '제2외국어': 'lang-group', '톡이즈': 'talkis-group'
+    '영어': 'eng-group', '제2외국어': 'lang-group', '톡이즈': 'talkis-group'
   };
 
   function renderGroups(groupedPersons) {
@@ -2937,6 +2959,8 @@ async function tryBuildTab4() {
   document.getElementById('tabTalkis').innerHTML = renderGroups(groupedTalkis);
   document.getElementById('dashboardArea').classList.remove('hidden');
   document.getElementById('emptyState').classList.add('hidden');
+  populateQuickNav(groupedMain);
+  if (typeof window.refreshFabMenu === 'function') window.refreshFabMenu(groupedMain);
   setupQuickNavSpy();
 
   // 누적 엑셀저장용 데이터 캐시
@@ -2984,7 +3008,7 @@ function downloadPng(type) {
     return;
   }
 
-  const engGroups = ['W그룹', 'E그룹', 'N그룹'];
+  const engGroups = ['W그룹', 'E그룹', 'N그룹', '영어'];
   const langGroups = ['제2외국어'];
   const targetGroups = type === 'lang' ? langGroups : engGroups;
   const label = type === 'lang' ? '제2외국어' : '영어';
@@ -3045,7 +3069,7 @@ async function downloadAll() {
       }
       const panel = getActiveTabPanel();
       if (!panel || !panel.innerHTML) { resolve(); return; }
-      const engGroups = ['W그룹', 'E그룹', 'N그룹'];
+      const engGroups = ['W그룹', 'E그룹', 'N그룹', '영어'];
       const langGroups = ['제2외국어'];
       const targetGroups = type === 'lang' ? langGroups : engGroups;
       const label = type === 'lang' ? '제2외국어' : '영어';
@@ -3200,7 +3224,7 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
   const activeRoster = getRosterForDate(targetDate);
   const monthStart = targetDate.slice(0, 8) + '01';
   const cumDates = allDates.filter(d => d >= monthStart && d <= targetDate);
-  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '제2외국어'];
+  const mainGroups = ['W그룹', 'E그룹', 'N그룹', '영어', '제2외국어'];
   const talkisGroups = ['톡이즈'];
 
   // 전월 명단 (그룹 변동 비교용)
@@ -3253,8 +3277,10 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
     const categoryVal = String(ctRow[CT_COL.category] || '').trim();
     const isIN = categoryVal === '';
     const meta = acc.keyMeta[custKey];
-    // 퇴사 처리로 manager가 "(종료)XXX"로 변경된 경우, keyMeta.p(DB 당시 obName)를 원본 이름으로 사용
-    const canonicalName = (meta && meta.p && activeRoster.has(meta.p)) ? meta.p : manager;
+    // 계약 담당자(N열) 우선. 단, "(종료)XXX"인 경우에만 keyMeta.p(DB 당시 obName)로 복원
+    const canonicalName = (manager.startsWith('(종료)') && meta && meta.p && activeRoster.has(meta.p))
+      ? meta.p
+      : manager;
     let is일계약 = false;
     if (meta) {
       is일계약 = meta.el === 1 && (appDateStr === meta.d);
@@ -3442,7 +3468,7 @@ function getAccSavedDates(tab) {
 }
 
 function buildAccSheet(groupedData, dateLabel, tab) {
-  const groupBgMap = { 'W그룹': '1565C0', 'E그룹': '1E88E5', 'N그룹': '42A5F5', '제2외국어': '81C784', '톡이즈': 'B39DDB' };
+  const groupBgMap = { 'W그룹': '1565C0', 'E그룹': '1E88E5', 'N그룹': '42A5F5', '영어': '1565C0', '제2외국어': '81C784', '톡이즈': 'B39DDB' };
   const sectionBgs = ['FFFFFF','FFFFFF','FFFFFF','FFFFFF','FFFFFF','FFFFFF', 'E3F2FD','E3F2FD','E3F2FD','E3F2FD', 'E8F5E9','E8F5E9','E8F5E9', 'FFF8E1','FFF8E1','FFF8E1', 'FCE4EC','FCE4EC', 'F3E5F5','F3E5F5','F3E5F5','F3E5F5', 'E0F2F1','E0F2F1','E0F2F1', 'FFFFFF','FFFFFF'];
   const sectionMerges = [[1,5],[6,9],[10,12],[13,15],[16,17],[18,21],[22,24]];
   const totalCols = 27;
@@ -4109,7 +4135,7 @@ async function loadSharedData() {
     await new Promise(r => setTimeout(r, 0));
     rosterByMonth = {};
     for (const [monthKey, rows] of Object.entries(shared.roster)) {
-      rosterByMonth[monthKey] = parseRosterRows(rows);
+      rosterByMonth[monthKey] = parseRosterRows(rows, monthKey);
     }
     const latestRosterMonth = Object.keys(rosterByMonth).sort().pop();
     if (latestRosterMonth) {
@@ -4374,7 +4400,7 @@ async function refreshFromRemoteIfNeeded() {
     // 명단 복원
     rosterByMonth = {};
     for (const [monthKey, rows] of Object.entries(remote.roster || {})) {
-      rosterByMonth[monthKey] = parseRosterRows(rows);
+      rosterByMonth[monthKey] = parseRosterRows(rows, monthKey);
     }
     const latestRosterMonth = Object.keys(rosterByMonth).sort().pop();
     if (latestRosterMonth) {
@@ -4614,10 +4640,12 @@ async function migrateV6vi25() {
 // ── Floating FAB: Group Nav + Top Button ──
 (function() {
   const SIZE = 48, STROKE = 3, R = (SIZE - STROKE) / 2, CIRC = 2 * Math.PI * R;
+  // 가능한 모든 그룹 (4월: W/E/N, 5월~: 영어, 공통: 제2외국어)
   const GROUPS = [
     { key: 'W그룹',   label: 'W',    color: '#1565c0' },
     { key: 'E그룹',   label: 'E',    color: '#1e88e5' },
     { key: 'N그룹',   label: 'N',    color: '#42a5f5' },
+    { key: '영어',    label: '영어', color: '#1565c0' },
     { key: '제2외국어', label: '2nd', color: '#66bb6a' },
   ];
 
@@ -4633,6 +4661,7 @@ async function migrateV6vi25() {
 
   GROUPS.forEach((g, i) => {
     const item = document.createElement('div');
+    item.dataset.group = g.key;
     item.style.cssText = `position:relative;display:flex;align-items:center;justify-content:center;opacity:0;transform:translateY(10px) scale(0.5);transition:opacity .25s ${i * 0.04}s cubic-bezier(.34,1.56,.64,1),transform .25s ${i * 0.04}s cubic-bezier(.34,1.56,.64,1);`;
 
     // Tooltip (left side)
@@ -4727,6 +4756,17 @@ async function migrateV6vi25() {
   fab.appendChild(navBtn);
   fab.appendChild(topBtn);
   document.body.appendChild(fab);
+
+  // 외부에서 표시 그룹 갱신: groupedMain Map(또는 그룹키 Set)을 받아 메뉴 항목 visibility 토글
+  window.refreshFabMenu = function(groupedMain) {
+    const items = menu.querySelectorAll(':scope > div[data-group]');
+    items.forEach(item => {
+      const key = item.dataset.group;
+      const persons = groupedMain && groupedMain.get && groupedMain.get(key);
+      const has = !!(persons && persons.length > 0);
+      item.style.display = has ? '' : 'none';
+    });
+  };
 
   // ── Scroll: show/hide FAB + update progress ring ──
   const ring = document.getElementById('topBtnRing');
