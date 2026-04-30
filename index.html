@@ -3271,8 +3271,9 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
     const manager = String(ctRow[CT_COL.manager] || '').trim();
     if (!manager) return;
     const custKey = String(ctRow[CT_COL.customerKey] || '').trim();
-    const returnDateVal = ctRow[CT_COL.returnDate];
-    const isCancelled = returnDateVal != null && returnDateVal !== '' && String(returnDateVal).trim() !== '';
+    // 스냅샷 박제 정책: targetDate 이후 발생한 취소는 그 시점엔 미발생이므로 비취소로 처리
+    const returnDateStr = datePart(ctRow[CT_COL.returnDate]);
+    const isCancelled = !!returnDateStr && returnDateStr <= targetDate;
     const appDateStr = datePart(ctRow[CT_COL.applicationDate]);
     const categoryVal = String(ctRow[CT_COL.category] || '').trim();
     const isIN = categoryVal === '';
@@ -4568,9 +4569,33 @@ async function migrateV6vi25() {
   }
 }
 
+// ── 자동 동기화: 22:00, 23:00, 00:00 정각 (탭 열려있어야 동작) ──
+function setupAutoSync() {
+  const TARGET_HOURS = new Set([22, 23, 0]);
+  function scheduleNext() {
+    const now = new Date();
+    const next = new Date(now);
+    next.setMinutes(0, 0, 0);
+    do { next.setHours(next.getHours() + 1); } while (!TARGET_HOURS.has(next.getHours()));
+    const delay = next.getTime() - now.getTime();
+    setTimeout(async () => {
+      if (getGhToken()) {
+        try {
+          console.log('[auto-sync]', new Date().toLocaleString('ko-KR'));
+          await syncToGitHub(true);
+        } catch (e) {
+          console.warn('[auto-sync] 실패:', e);
+        }
+      }
+      scheduleNext();
+    }, delay);
+  }
+  scheduleNext();
+}
+
 // ── Init ──
 (async function init() {
-  if (authPassed) applyAuthUI();
+  if (authPassed) { applyAuthUI(); setupAutoSync(); }
 
   // 로딩 UI 시작
   const iconEl = document.getElementById('emptyStateIcon');
