@@ -508,6 +508,11 @@
           <button id="btnSnapshotRestore" onclick="restoreSnapshots()" style="white-space:nowrap;">복원 실행</button>
         </div>
         <div id="snapshotRestoreStatus" style="font-size:12px;color:#666;"></div>
+        <div style="border-top:1px dashed #ddd;margin-top:4px;padding-top:8px;">
+          <div style="font-size:11px;color:#999;line-height:1.5;margin-bottom:6px;">현재 keyMeta/계약 데이터로 모든 누적 스냅샷을 다시 계산합니다. 잘못 올린 파일을 정정한 뒤 누르세요.</div>
+          <button id="btnForceRebuild" onclick="forceRebuildAllSnapshots()" style="white-space:nowrap;background:#fff3e0;border:1px solid #ffb74d;color:#e65100;">🔄 현재 데이터로 모든 스냅샷 강제 재빌드</button>
+          <div id="forceRebuildStatus" style="font-size:12px;color:#666;margin-top:6px;"></div>
+        </div>
       </div>
     </div>
     <div class="bottom-pin-section">
@@ -4566,6 +4571,37 @@ async function migrateV6vi25() {
     console.log('V6vi25 역마이그레이션 완료 (이중 제외 복원):', subtract);
   } catch (err) {
     console.error('V6vi25 역마이그레이션 오류:', err);
+  }
+}
+
+// ── 모든 스냅샷 강제 재빌드 (실수 정정용) ──
+async function forceRebuildAllSnapshots() {
+  if (!rosterMap || !contractData) { alert('먼저 데이터를 업로드해주세요.'); return; }
+  if (!confirm('모든 누적 스냅샷을 현재 데이터로 다시 계산합니다.\n진행하시겠습니까?')) return;
+  const btn = document.getElementById('btnForceRebuild');
+  const status = document.getElementById('forceRebuildStatus');
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+  status.textContent = '재빌드 중...';
+  status.style.color = '#666';
+  try {
+    const newCount = await buildAllDateAccumulated(true);
+    refreshAccDisplay();
+    status.textContent = `재빌드 완료 (${newCount}일치). 동기화 중...`;
+    try {
+      await syncToGitHub(true);
+      status.textContent = `재빌드 + 동기화 완료 (${newCount}일치)`;
+      status.style.color = '#2e7d32';
+    } catch (e) {
+      status.textContent = `재빌드는 완료했으나 동기화 실패: ${e.message || e}. [동기화] 버튼을 눌러주세요.`;
+      status.style.color = '#c62828';
+    }
+  } catch (e) {
+    status.textContent = `재빌드 오류: ${e.message || e}`;
+    status.style.color = '#c62828';
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '';
   }
 }
 
