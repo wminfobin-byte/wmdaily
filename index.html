@@ -490,14 +490,6 @@
         <button id="btnRawDisconnect" class="danger" onclick="disconnectRawDir()" style="display:none;">연결 해제</button>
       </div>
     </div>
-    <div class="storage-row" style="justify-content:space-between;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="storage-label">DB수 아카이브:</span>
-        <button onclick="toggleArchiveList()">목록 보기</button>
-      </div>
-      <button class="danger" onclick="clearArchive()">아카이브 삭제</button>
-    </div>
-    <div id="archiveList" style="display:none;width:100%;max-height:200px;overflow-y:auto;font-size:12px;"></div>
     <div class="storage-row" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="storage-label">누적 엑셀:</span>
@@ -831,6 +823,8 @@ function applyAuthUI() {
   // RAW 폴더 연결 UI는 로그인 이후 + 핸들 복원 후 표시
   if (typeof restoreRawDir === 'function') restoreRawDir().catch(() => {});
   if (typeof updateRawDirUI === 'function') updateRawDirUI();
+  // 관리자 모드 진입 — 열람자 자동 fetch는 정지 (RAW 폴링이 담당)
+  if (typeof stopViewerAutoFetch === 'function') stopViewerAutoFetch();
 }
 
 function authLogout() {
@@ -845,9 +839,11 @@ function authLogout() {
   document.getElementById('btnAccSave').style.display = 'none';
   document.getElementById('btnLogout').style.display = 'none';
   document.getElementById('syncTime').style.display = 'none';
-  // 열람자 모드로 돌아가면 RAW 폴더 UI 즉시 숨김
+  // 열람자 모드로 돌아가면 RAW 폴더 UI 즉시 숨김 + RAW 폴링 정지 + 열람자 fetch 재개
   const rawRow = document.getElementById('rawDirRow');
   if (rawRow) rawRow.style.display = 'none';
+  if (typeof stopRawPolling === 'function') stopRawPolling();
+  if (typeof startViewerAutoFetch === 'function') startViewerAutoFetch();
 }
 
 function openModal() {
@@ -1612,6 +1608,7 @@ async function connectRawDir() {
   await _saveRawDirHandle(root);
   updateRawDirUI();
   showStatus(`RAW 폴더 연결됨: ${rawState.rootName}`, 'success');
+  startRawPolling();
   return true;
 }
 
@@ -1629,6 +1626,7 @@ async function restoreRawDir() {
       for (const [type, name] of Object.entries(RAW_SUBDIRS)) {
         rawState.subHandles[type] = await handle.getDirectoryHandle(name, { create: true });
       }
+      startRawPolling();
     } catch (err) {
       console.warn('RAW 하위 폴더 캐싱 실패:', err);
     }
@@ -1637,11 +1635,13 @@ async function restoreRawDir() {
 }
 
 async function disconnectRawDir() {
+  stopRawPolling();
   rawState.rootHandle = null;
   rawState.rootName = '';
   rawState.subHandles = {};
   rawState.permission = 'unknown';
   await _clearRawDirHandle().catch(() => {});
+  try { localStorage.removeItem(RAW_POLL_KEY); } catch {}
   updateRawDirUI();
   showStatus('RAW 폴더 연결 해제됨', 'success');
 }
@@ -1656,6 +1656,7 @@ async function reconnectRawDirOnDemand() {
     for (const [type, name] of Object.entries(RAW_SUBDIRS)) {
       rawState.subHandles[type] = await rawState.rootHandle.getDirectoryHandle(name, { create: true });
     }
+    startRawPolling();
   } catch (err) {
     console.warn('하위 폴더 재캐싱 실패:', err);
   }
@@ -1675,11 +1676,149 @@ async function writeFileToRaw(type, fileName, arrayBuffer) {
     const writable = await fileHandle.createWritable();
     await writable.write(arrayBuffer);
     await writable.close();
+    // 폴링 baseline 갱신: 우리가 방금 쓴 파일은 다음 폴링이 다시 처리하지 않게
+    try {
+      const file = await fileHandle.getFile();
+      const state = _loadPollState();
+      state[type] = state[type] || {};
+      state[type][fileName] = { size: file.size, mtime: file.lastModified };
+      _savePollState(state);
+    } catch {}
     return { ok: true };
   } catch (err) {
     console.error('RAW 폴더 쓰기 실패:', fileName, err);
     return { ok: false, reason: 'write-failed', error: err };
   }
+}
+
+// ── RAW 폴더 30초 폴링 (관리자 PC) ──
+// 다른 PC/팀원이 RAW 폴더에 파일을 떨어뜨리면 자동 감지 → IDB 반영 → GitHub data.json 갱신
+const RAW_POLL_INTERVAL = 30000;
+const RAW_POLL_KEY = 'wmdaily_rawPollState';
+let rawPollTimer = null;
+let rawPollInflight = false;
+
+function _loadPollState() {
+  try { return JSON.parse(localStorage.getItem(RAW_POLL_KEY) || '{}'); }
+  catch { return {}; }
+}
+function _savePollState(s) {
+  try { localStorage.setItem(RAW_POLL_KEY, JSON.stringify(s)); } catch {}
+}
+
+// arrayBuffer를 받아 type에 맞게 IDB에 반영. 업로드 핸들러의 핵심 로직과 동일.
+async function processRawFile(type, name, arrayBuffer) {
+  let wb, ws, raw, data;
+  try {
+    wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+    ws = wb.Sheets[wb.SheetNames[0]];
+    raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    data = raw.slice(1);
+  } catch (err) {
+    console.warn('[RAW poll] 엑셀 파싱 실패:', name, err);
+    return false;
+  }
+  if (type === 'roster') {
+    const monthKey = extractMonthKey(name);
+    const parsed = parseRosterRows(data, monthKey);
+    rosterByMonth[monthKey] = parsed;
+    await saveRosterToDB(monthKey, data);
+    await saveFileMeta('roster', `${name} (${monthKey})`, parsed.size);
+    const latestMonth = Object.keys(rosterByMonth).sort().pop();
+    rosterMap = rosterByMonth[latestMonth];
+    return true;
+  } else if (type === 'db') {
+    const result = await accumulateDbData(data);
+    if (result) {
+      todayDbDate = result.latestDate;
+      await saveFileMeta('db', name, data.length, result.addedKeys, result.dateContributions);
+    }
+    await saveFileArchive(name, arrayBuffer);
+    return true;
+  } else if (type === 'contract') {
+    const monthKey = extractMonthKey(name);
+    contractByMonth[monthKey] = data;
+    await saveContractToDB();
+    await saveFileMeta('contract', `${name} (${monthKey})`, data.length);
+    contractData = mergeAllContracts();
+    return true;
+  }
+  return false;
+}
+
+async function pollRawFolder() {
+  if (rawPollInflight) return;
+  if (!rawState.rootHandle || rawState.permission !== 'granted') return;
+  if (document.hidden) return;
+  rawPollInflight = true;
+  try {
+    const state = _loadPollState();
+    let dirty = false;
+    let pickedCount = 0;
+    for (const [type, sub] of Object.entries(rawState.subHandles)) {
+      if (!sub) continue;
+      const lastSeen = state[type] || {};
+      const newSeen = {};
+      const newOrChanged = [];
+      try {
+        for await (const [name, handle] of sub.entries()) {
+          if (!handle || handle.kind !== 'file') continue;
+          if (!/\.(xlsx|xls)$/i.test(name)) continue;
+          let file;
+          try { file = await handle.getFile(); } catch { continue; }
+          const meta = { size: file.size, mtime: file.lastModified };
+          newSeen[name] = meta;
+          const prev = lastSeen[name];
+          if (!prev || prev.size !== meta.size || prev.mtime !== meta.mtime) {
+            newOrChanged.push({ name, file });
+          }
+        }
+      } catch (err) {
+        console.warn('[RAW poll] 폴더 순회 실패:', type, err);
+        continue;
+      }
+      // 첫 폴링이고 baseline 자체가 비어있으면 처리하지 않고 baseline만 등록
+      const isInitial = Object.keys(lastSeen).length === 0 && Object.keys(newSeen).length > 0;
+      if (!isInitial) {
+        for (const item of newOrChanged) {
+          try {
+            const buf = await item.file.arrayBuffer();
+            const ok = await processRawFile(type, item.name, buf);
+            if (ok) { dirty = true; pickedCount++; }
+          } catch (err) {
+            console.warn('[RAW poll] 파일 처리 실패:', item.name, err);
+          }
+        }
+      }
+      state[type] = newSeen;
+    }
+    _savePollState(state);
+    if (dirty) {
+      console.log(`[RAW poll] ${pickedCount}개 파일 반영`);
+      try { await tryBuildTab4(); } catch {}
+      // GitHub 갱신 (관리자만 가능 — 토큰 있으면)
+      if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
+        try { await syncToGitHub(true); } catch (e) { console.warn('[RAW poll] GitHub sync 실패:', e); }
+      }
+      showStatus(`RAW 폴더에서 ${pickedCount}개 파일 반영됨`, 'success');
+    }
+  } catch (err) {
+    console.warn('[RAW poll] 오류:', err);
+  } finally {
+    rawPollInflight = false;
+  }
+}
+
+function startRawPolling() {
+  if (rawPollTimer) return;
+  if (!rawState.rootHandle || rawState.permission !== 'granted') return;
+  rawPollTimer = setInterval(pollRawFolder, RAW_POLL_INTERVAL);
+  // 즉시 한 번 (baseline 등록 + 신규 파일 잡기)
+  pollRawFolder();
+}
+
+function stopRawPolling() {
+  if (rawPollTimer) { clearInterval(rawPollTimer); rawPollTimer = null; }
 }
 
 // IDB의 fileArchive(=DB수 누적) 전체를 RAW의 1-2 고객관리 DB수 폴더로 export
@@ -1784,6 +1923,53 @@ async function onClickRawConnect() {
     await connectRawDir();
   }
 }
+
+// ── 열람자(비로그인) 측 GitHub data.json 30초 자동 fetch ──
+// 새 데이터 감지 시 화면 자동 갱신 — 사용자가 새로고침 안 해도 최신 반영
+const VIEWER_FETCH_INTERVAL = 30000;
+let viewerFetchTimer = null;
+let viewerFetchInflight = false;
+
+async function viewerAutoFetchTick() {
+  if (viewerFetchInflight) return;
+  if (document.hidden) return;
+  if (authPassed) return; // 관리자는 RAW 폴링이 담당
+  viewerFetchInflight = true;
+  try {
+    const localAt = localStorage.getItem('gh_data_exportedAt') || '';
+    const remote = await fetchRemoteData();
+    if (!remote || !remote.exportedAt) return;
+    if (localAt && remote.exportedAt <= localAt) return; // 변경 없음
+    console.log('[viewer auto-fetch] 새 데이터 감지:', remote.exportedAt, '>', localAt);
+    await refreshFromRemoteIfNeeded();
+    try { await tryBuildTab4(); } catch {}
+  } catch (err) {
+    console.warn('[viewer auto-fetch] 오류:', err);
+  } finally {
+    viewerFetchInflight = false;
+  }
+}
+
+function startViewerAutoFetch() {
+  if (viewerFetchTimer) return;
+  if (authPassed) return;
+  viewerFetchTimer = setInterval(viewerAutoFetchTick, VIEWER_FETCH_INTERVAL);
+}
+
+function stopViewerAutoFetch() {
+  if (viewerFetchTimer) { clearInterval(viewerFetchTimer); viewerFetchTimer = null; }
+}
+
+// 탭 visibility — 백그라운드면 폴링/페치 정지, 포커스 복귀 시 즉시 한 번 + 인터벌 재시작
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    stopRawPolling();
+    stopViewerAutoFetch();
+  } else {
+    if (rawState.rootHandle && rawState.permission === 'granted') startRawPolling();
+    if (!authPassed) { startViewerAutoFetch(); viewerAutoFetchTick(); }
+  }
+});
 
 async function toggleArchiveList() {
   const el = document.getElementById('archiveList');
@@ -4957,6 +5143,7 @@ function setupAutoSync() {
 // ── Init ──
 (async function init() {
   if (authPassed) { applyAuthUI(); setupAutoSync(); }
+  else { startViewerAutoFetch(); }
 
   // 로딩 UI 시작
   const iconEl = document.getElementById('emptyStateIcon');
