@@ -479,6 +479,17 @@
       <button class="btn-icon" onclick="refreshStorageDisplay()" title="새로고침">🔄</button>
       <button class="btn-icon danger" onclick="clearStorage()" title="전체 초기화">🗑</button>
     </div>
+    <div class="storage-row" id="rawDirRow" style="display:none;flex-wrap:wrap;justify-content:space-between;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="storage-label" title="회사 공유폴더 Y:\700_영업관리실\04_영업관리실 성과\09_WM_데일리 성과 RAW">RAW 폴더:</span>
+        <span id="rawDirStatus" style="font-size:12px;">미연결</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <button id="btnRawConnect" onclick="onClickRawConnect()">RAW 폴더 연결</button>
+        <button id="btnRawMigrate" onclick="migrateArchiveToRaw()" disabled title="IDB에 저장된 DB수 파일을 RAW 폴더로 일괄 백업">기존 파일 백업</button>
+        <button id="btnRawDisconnect" class="danger" onclick="disconnectRawDir()" style="display:none;">연결 해제</button>
+      </div>
+    </div>
     <div class="storage-row" style="justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="storage-label">DB수 아카이브:</span>
@@ -817,6 +828,9 @@ function applyAuthUI() {
   document.getElementById('btnAccSave').style.display = '';
   document.getElementById('btnLogout').style.display = '';
   restoreSyncTime();
+  // RAW 폴더 연결 UI는 로그인 이후 + 핸들 복원 후 표시
+  if (typeof restoreRawDir === 'function') restoreRawDir().catch(() => {});
+  if (typeof updateRawDirUI === 'function') updateRawDirUI();
 }
 
 function authLogout() {
@@ -831,6 +845,9 @@ function authLogout() {
   document.getElementById('btnAccSave').style.display = 'none';
   document.getElementById('btnLogout').style.display = 'none';
   document.getElementById('syncTime').style.display = 'none';
+  // 열람자 모드로 돌아가면 RAW 폴더 UI 즉시 숨김
+  const rawRow = document.getElementById('rawDirRow');
+  if (rawRow) rawRow.style.display = 'none';
 }
 
 function openModal() {
@@ -1089,13 +1106,14 @@ function readExcel(file, callback, progressBarId) {
 // ── IndexedDB ──
 // ══════════════════════════════════════════════
 const DB_NAME = 'dbPerfDashboard';
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const STORE_DATES = 'dates';
 const STORE_KEYS = 'keyMeta';
 const STORE_ROSTER = 'roster';       // key: 'YYYY-MM', value: array of roster rows
 const STORE_CONTRACT = 'contract';
 const STORE_FILEMETA = 'fileMeta';
 const STORE_ARCHIVE = 'fileArchive';
+const STORE_DIRHANDLE = 'rawDirHandle';   // v7: RAW 공유폴더 directoryHandle 영구 저장
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -1110,6 +1128,7 @@ function openDB() {
         if (!db.objectStoreNames.contains(STORE_CONTRACT)) db.createObjectStore(STORE_CONTRACT);
         if (!db.objectStoreNames.contains(STORE_FILEMETA)) db.createObjectStore(STORE_FILEMETA);
         if (!db.objectStoreNames.contains(STORE_ARCHIVE)) db.createObjectStore(STORE_ARCHIVE);
+        if (!db.objectStoreNames.contains(STORE_DIRHANDLE)) db.createObjectStore(STORE_DIRHANDLE);
       };
       req.onsuccess = () => { clearTimeout(timeout); resolve(req.result); };
       req.onerror = () => { clearTimeout(timeout); reject(req.error); };
@@ -1490,6 +1509,282 @@ async function saveFileArchive(fileName, arrayBuffer) {
   }
 }
 
+// ══════════════════════════════════════════════
+// ── RAW 공유폴더 양방향 sync (File System Access API, Chrome 전용) ──
+// 루트: Y:\700_영업관리실\04_영업관리실 성과\09_WM_데일리 성과 RAW
+// 하위: type별 매핑된 폴더에 파일 저장/읽기
+// ══════════════════════════════════════════════
+const RAW_SUBDIRS = {
+  roster:   '2-8 그룹표기엑셀',
+  db:       '1-2 고객관리 DB수',
+  contract: '1-5 신청자관리',
+};
+const rawState = {
+  rootHandle: null,        // FileSystemDirectoryHandle (root)
+  rootName: '',            // 표시용 폴더 이름
+  subHandles: {},          // type → FileSystemDirectoryHandle 캐시
+  permission: 'unknown',   // 'granted' | 'prompt' | 'denied' | 'unknown'
+};
+
+function isRawApiSupported() {
+  return typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+}
+
+async function _saveRawDirHandle(handle) {
+  const db = await openDB();
+  const tx = db.transaction(STORE_DIRHANDLE, 'readwrite');
+  tx.objectStore(STORE_DIRHANDLE).put(handle, 'root');
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+  db.close();
+}
+
+async function _loadRawDirHandle() {
+  const db = await openDB();
+  const tx = db.transaction(STORE_DIRHANDLE, 'readonly');
+  const handle = await new Promise(resolve => {
+    const req = tx.objectStore(STORE_DIRHANDLE).get('root');
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => resolve(null);
+  });
+  db.close();
+  return handle;
+}
+
+async function _clearRawDirHandle() {
+  const db = await openDB();
+  const tx = db.transaction(STORE_DIRHANDLE, 'readwrite');
+  tx.objectStore(STORE_DIRHANDLE).delete('root');
+  await new Promise(resolve => { tx.oncomplete = resolve; tx.onerror = resolve; });
+  db.close();
+}
+
+// 권한 query만 (request 안 함). 페이지 로드 시 모달 안 뜨게.
+async function queryRawPermission(handle, mode = 'readwrite') {
+  if (!handle || !handle.queryPermission) return 'denied';
+  try { return await handle.queryPermission({ mode }); } catch { return 'denied'; }
+}
+
+// 사용자 제스처 안에서만 호출. 'prompt' 상태면 권한 모달 띄움.
+async function ensureRawPermission(handle, mode = 'readwrite') {
+  if (!handle) return 'denied';
+  let state = await queryRawPermission(handle, mode);
+  if (state === 'granted') return 'granted';
+  if (handle.requestPermission) {
+    try { state = await handle.requestPermission({ mode }); } catch { state = 'denied'; }
+  }
+  return state;
+}
+
+// 사용자 제스처 안에서 호출 — 폴더 picker 열기, 하위 3개 폴더 핸들 캐싱
+async function connectRawDir() {
+  if (!isRawApiSupported()) {
+    showStatus('이 브라우저는 폴더 연결을 지원하지 않습니다. (크롬 전용)', 'error');
+    return false;
+  }
+  let root;
+  try {
+    root = await window.showDirectoryPicker({ id: 'wmdaily-raw', mode: 'readwrite', startIn: 'documents' });
+  } catch (err) {
+    if (err && err.name === 'AbortError') return false;
+    showStatus('폴더 선택 오류: ' + (err && err.message), 'error');
+    return false;
+  }
+  const perm = await ensureRawPermission(root, 'readwrite');
+  if (perm !== 'granted') {
+    showStatus('폴더 쓰기 권한이 거부되었습니다.', 'error');
+    return false;
+  }
+  // 하위 3개 폴더 핸들 캐싱 (없으면 생성)
+  const subs = {};
+  for (const [type, name] of Object.entries(RAW_SUBDIRS)) {
+    try {
+      subs[type] = await root.getDirectoryHandle(name, { create: true });
+    } catch (err) {
+      console.error('하위 폴더 접근 실패:', name, err);
+      showStatus(`하위 폴더 접근 실패: ${name} (${err.message})`, 'error');
+      return false;
+    }
+  }
+  rawState.rootHandle = root;
+  rawState.rootName = root.name || 'RAW';
+  rawState.subHandles = subs;
+  rawState.permission = 'granted';
+  await _saveRawDirHandle(root);
+  updateRawDirUI();
+  showStatus(`RAW 폴더 연결됨: ${rawState.rootName}`, 'success');
+  return true;
+}
+
+// 페이지 로드 시 호출 — 핸들만 복원, 권한은 query만 (request X)
+async function restoreRawDir() {
+  if (!isRawApiSupported()) return;
+  const handle = await _loadRawDirHandle().catch(() => null);
+  if (!handle) { rawState.permission = 'unknown'; updateRawDirUI(); return; }
+  rawState.rootHandle = handle;
+  rawState.rootName = handle.name || 'RAW';
+  rawState.permission = await queryRawPermission(handle, 'readwrite');
+  if (rawState.permission === 'granted') {
+    // 권한 살아있으면 하위 폴더 핸들 미리 캐싱
+    try {
+      for (const [type, name] of Object.entries(RAW_SUBDIRS)) {
+        rawState.subHandles[type] = await handle.getDirectoryHandle(name, { create: true });
+      }
+    } catch (err) {
+      console.warn('RAW 하위 폴더 캐싱 실패:', err);
+    }
+  }
+  updateRawDirUI();
+}
+
+async function disconnectRawDir() {
+  rawState.rootHandle = null;
+  rawState.rootName = '';
+  rawState.subHandles = {};
+  rawState.permission = 'unknown';
+  await _clearRawDirHandle().catch(() => {});
+  updateRawDirUI();
+  showStatus('RAW 폴더 연결 해제됨', 'success');
+}
+
+// 사용자 제스처 안에서 호출 — 권한 prompt 후 핸들 재캐싱
+async function reconnectRawDirOnDemand() {
+  if (!rawState.rootHandle) return false;
+  const perm = await ensureRawPermission(rawState.rootHandle, 'readwrite');
+  rawState.permission = perm;
+  if (perm !== 'granted') { updateRawDirUI(); return false; }
+  try {
+    for (const [type, name] of Object.entries(RAW_SUBDIRS)) {
+      rawState.subHandles[type] = await rawState.rootHandle.getDirectoryHandle(name, { create: true });
+    }
+  } catch (err) {
+    console.warn('하위 폴더 재캐싱 실패:', err);
+  }
+  updateRawDirUI();
+  return true;
+}
+
+// type: 'roster' | 'db' | 'contract'. arrayBuffer는 readExcel 콜백에서 받음.
+// 동일 파일명 존재 시 자동 덮어쓰기.
+async function writeFileToRaw(type, fileName, arrayBuffer) {
+  if (!rawState.rootHandle) return { ok: false, reason: 'not-connected' };
+  if (rawState.permission !== 'granted') return { ok: false, reason: 'no-permission' };
+  const sub = rawState.subHandles[type];
+  if (!sub) return { ok: false, reason: 'no-subdir' };
+  try {
+    const fileHandle = await sub.getFileHandle(fileName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(arrayBuffer);
+    await writable.close();
+    return { ok: true };
+  } catch (err) {
+    console.error('RAW 폴더 쓰기 실패:', fileName, err);
+    return { ok: false, reason: 'write-failed', error: err };
+  }
+}
+
+// IDB의 fileArchive(=DB수 누적) 전체를 RAW의 1-2 고객관리 DB수 폴더로 export
+async function migrateArchiveToRaw() {
+  if (!rawState.rootHandle) {
+    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
+    return;
+  }
+  const perm = await ensureRawPermission(rawState.rootHandle, 'readwrite');
+  if (perm !== 'granted') {
+    showStatus('RAW 폴더 쓰기 권한이 없습니다.', 'error');
+    return;
+  }
+  // 하위 핸들 보장
+  if (!rawState.subHandles.db) {
+    try { rawState.subHandles.db = await rawState.rootHandle.getDirectoryHandle(RAW_SUBDIRS.db, { create: true }); }
+    catch (err) { showStatus('하위 폴더 접근 실패: ' + err.message, 'error'); return; }
+  }
+  // IDB에서 전체 fileArchive 읽기
+  let items = [];
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_ARCHIVE, 'readonly');
+    const store = tx.objectStore(STORE_ARCHIVE);
+    items = await new Promise(resolve => {
+      const out = [];
+      const req = store.openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (cursor) { out.push({ name: cursor.key, data: cursor.value && cursor.value.data }); cursor.continue(); }
+        else resolve(out);
+      };
+      req.onerror = () => resolve(out);
+    });
+    db.close();
+  } catch (err) {
+    showStatus('IDB 읽기 오류: ' + err.message, 'error');
+    return;
+  }
+  if (items.length === 0) {
+    showStatus('백업할 파일이 없습니다.', 'success');
+    return;
+  }
+  if (!confirm(`IDB에 저장된 DB수 파일 ${items.length}개를 RAW 폴더(${RAW_SUBDIRS.db})에 백업합니다. 동일 파일명은 덮어쓰여집니다. 계속할까요?`)) return;
+
+  const statusEl = document.getElementById('rawDirStatus');
+  let ok = 0, fail = 0;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (statusEl) statusEl.textContent = `백업 중... ${i + 1}/${items.length}`;
+    if (!it.data) { fail++; continue; }
+    const result = await writeFileToRaw('db', it.name, it.data);
+    if (result.ok) ok++;
+    else fail++;
+  }
+  updateRawDirUI();
+  showStatus(`RAW 백업 완료: 성공 ${ok}개${fail ? ` / 실패 ${fail}개` : ''}`, fail ? 'error' : 'success');
+}
+
+function updateRawDirUI() {
+  const row = document.getElementById('rawDirRow');
+  const statusEl = document.getElementById('rawDirStatus');
+  const btnConnect = document.getElementById('btnRawConnect');
+  const btnDisconnect = document.getElementById('btnRawDisconnect');
+  const btnMigrate = document.getElementById('btnRawMigrate');
+  if (!row) return;
+  // 로그인된 사용자만 표시
+  row.style.display = authPassed ? '' : 'none';
+  if (!authPassed) return;
+  if (!isRawApiSupported()) {
+    statusEl.innerHTML = '<span style="color:#c62828;">미지원 브라우저 (크롬 사용 권장)</span>';
+    if (btnConnect) btnConnect.disabled = true;
+    return;
+  }
+  if (!rawState.rootHandle) {
+    statusEl.innerHTML = '<span style="color:#888;">미연결</span>';
+    if (btnConnect) { btnConnect.textContent = 'RAW 폴더 연결'; btnConnect.disabled = false; }
+    if (btnDisconnect) btnDisconnect.style.display = 'none';
+    if (btnMigrate) btnMigrate.disabled = true;
+    return;
+  }
+  const name = rawState.rootName || 'RAW';
+  if (rawState.permission === 'granted') {
+    statusEl.innerHTML = `<span style="color:#2e7d32;">● 연결됨</span> <span style="color:#666;">${name}</span>`;
+    if (btnConnect) { btnConnect.textContent = '폴더 변경'; btnConnect.disabled = false; }
+    if (btnDisconnect) btnDisconnect.style.display = '';
+    if (btnMigrate) btnMigrate.disabled = false;
+  } else {
+    statusEl.innerHTML = `<span style="color:#ef6c00;">● 권한 필요</span> <span style="color:#666;">${name}</span>`;
+    if (btnConnect) { btnConnect.textContent = '권한 다시 요청'; btnConnect.disabled = false; }
+    if (btnDisconnect) btnDisconnect.style.display = '';
+    if (btnMigrate) btnMigrate.disabled = true;
+  }
+}
+
+// 연결 버튼: rootHandle 있으면 권한 재요청, 없으면 picker
+async function onClickRawConnect() {
+  if (rawState.rootHandle && rawState.permission !== 'granted') {
+    const ok = await reconnectRawDirOnDemand();
+    if (ok) showStatus('RAW 폴더 권한이 부여되었습니다.', 'success');
+  } else {
+    await connectRawDir();
+  }
+}
+
 async function toggleArchiveList() {
   const el = document.getElementById('archiveList');
   if (el.style.display !== 'none') { el.style.display = 'none'; return; }
@@ -1733,6 +2028,24 @@ async function deleteDbFileEntry(type, index) {
     const keyStore = tx.objectStore(STORE_KEYS);
     for (const k of keysToRemove) keyStore.delete(k);
 
+    // 이중 검증: addedKeys 누락/불완전 대비 — dateContributions의 날짜에 해당하는
+    // keyMeta entries를 cursor 순회하며 모두 제거. (전제: 한 날짜=한 DB 파일)
+    const targetDates = new Set(Object.keys(contributions));
+    if (targetDates.size > 0) {
+      await new Promise((resolve, reject) => {
+        const req = keyStore.openCursor();
+        let sweepCount = 0;
+        req.onsuccess = (e) => {
+          const c = e.target.result;
+          if (!c) { if (sweepCount > 0) console.log('[deleteDb] keyMeta sweep removed:', sweepCount); resolve(); return; }
+          const v = c.value;
+          if (v && targetDates.has(v.d)) { c.delete(); sweepCount++; }
+          c.continue();
+        };
+        req.onerror = () => reject(req.error);
+      });
+    }
+
     const dateStore = tx.objectStore(STORE_DATES);
     for (const [date, persons] of Object.entries(contributions)) {
       const existing = await new Promise(resolve => {
@@ -1967,7 +2280,7 @@ document.getElementById('fileRoster').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
   const monthKey = extractMonthKey(file.name);
-  readExcel(file, async data => {
+  readExcel(file, async (data, arrayBuffer) => {
     const parsed = parseRosterRows(data, monthKey);
     rosterByMonth[monthKey] = parsed;
     await saveRosterToDB(monthKey, data);
@@ -1977,6 +2290,10 @@ document.getElementById('fileRoster').addEventListener('change', e => {
     document.getElementById('uploadRoster').classList.add('loaded');
     document.getElementById('rosterStatus').textContent = `${parsed.size}명 (${monthKey})`;
     showStatus(`명단 로드: ${parsed.size}명 → ${monthKey} (자동 저장됨)`, 'success');
+    if (rawState.rootHandle && rawState.permission === 'granted') {
+      const r = await writeFileToRaw('roster', file.name, arrayBuffer);
+      if (!r.ok) showStatus(`RAW 폴더 저장 실패 (${file.name}): ${r.reason || 'unknown'}`, 'error');
+    }
     populateFilters();
     fileJustUploaded = true;
     lastUploadType = 'roster';
@@ -2001,6 +2318,10 @@ document.getElementById('fileDb').addEventListener('change', e => {
         await saveFileMeta('db', file.name, data.length, result.addedKeys, result.dateContributions);
       }
       await saveFileArchive(file.name, arrayBuffer);
+      if (rawState.rootHandle && rawState.permission === 'granted') {
+        const r = await writeFileToRaw('db', file.name, arrayBuffer);
+        if (!r.ok) showStatus(`RAW 폴더 저장 실패 (${file.name}): ${r.reason || 'unknown'}`, 'error');
+      }
       processed++;
       document.getElementById('dbStatus').textContent = `${processed}/${total}개 파일 로드 완료`;
       setProgress('progressDb', Math.round(processed / total * 100), processed === total);
@@ -2020,7 +2341,7 @@ document.getElementById('fileContract').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
   const monthKey = extractMonthKey(file.name);
-  readExcel(file, async data => {
+  readExcel(file, async (data, arrayBuffer) => {
     contractByMonth[monthKey] = data;
     await saveContractToDB();
     await saveFileMeta('contract', `${file.name} (${monthKey})`, data.length);
@@ -2029,6 +2350,10 @@ document.getElementById('fileContract').addEventListener('change', e => {
     const months = Object.keys(contractByMonth).sort();
     document.getElementById('contractStatus').textContent = `${contractData.length.toLocaleString()}건 (${months.length}개월)`;
     showStatus(`계약수 로드: ${data.length.toLocaleString()}건 → ${monthKey} (자동 저장됨)`, 'success');
+    if (rawState.rootHandle && rawState.permission === 'granted') {
+      const r = await writeFileToRaw('contract', file.name, arrayBuffer);
+      if (!r.ok) showStatus(`RAW 폴더 저장 실패 (${file.name}): ${r.reason || 'unknown'}`, 'error');
+    }
     await refreshStorageDisplay();
     fileJustUploaded = true;
     lastUploadType = 'contract';
