@@ -2429,10 +2429,20 @@ function showStatus(msg, type) {
 // ══════════════════════════════════════════════
 function updateLastUpdateTime() {
   const el = document.getElementById('lastUpdate');
-  const saved = localStorage.getItem('dbPerf_lastUpdate');
-  if (saved) {
-    el.textContent = `최종 업데이트: ${saved}`;
+  if (!el) return;
+  const local = localStorage.getItem('dbPerf_lastUpdate');         // 자기 PC 업로드/폴링 시각
+  const ghAt = localStorage.getItem('gh_data_exportedAt');         // GitHub data.json exportedAt(ISO)
+  const localTs = local ? Date.parse(local) : 0;
+  const ghTs = ghAt ? Date.parse(ghAt) : 0;
+  let display = '';
+  if (localTs && ghTs) {
+    display = localTs >= ghTs ? local : fmtDateTime(new Date(ghAt));
+  } else if (local) {
+    display = local;
+  } else if (ghAt) {
+    display = fmtDateTime(new Date(ghAt));
   }
+  if (display) el.textContent = `최종 업데이트: ${display}`;
 }
 function saveLastUpdateTime() {
   const now = fmtDateTime(new Date());
@@ -4982,6 +4992,7 @@ async function refreshFromRemoteIfNeeded() {
     }
 
     localStorage.setItem('gh_data_exportedAt', remote.exportedAt);
+    updateLastUpdateTime();
     const exportDate = new Date(remote.exportedAt).toLocaleString('ko-KR');
     showStatus(`최신 데이터로 업데이트되었습니다. (${exportDate} 기준)`, 'success');
   } catch(e) {
