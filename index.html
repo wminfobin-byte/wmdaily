@@ -1795,6 +1795,8 @@ async function pollRawFolder() {
     _savePollState(state);
     if (dirty) {
       console.log(`[RAW poll] ${pickedCount}개 파일 반영`);
+      // 화면의 "최종 업데이트" 라벨도 갱신 (tryBuildTab4 안에서 saveLastUpdateTime 호출됨)
+      fileJustUploaded = true;
       try { await tryBuildTab4(); } catch {}
       // GitHub 갱신 (관리자만 가능 — 토큰 있으면)
       if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
