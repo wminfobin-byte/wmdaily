@@ -419,7 +419,7 @@
     <button class="modal-close" onclick="document.getElementById('authModal').classList.remove('active')">&times;</button>
     <h2 style="margin-bottom:16px;">업로드 인증</h2>
     <div style="display:flex;flex-direction:column;gap:10px;align-items:center;">
-      <input type="text" id="authId" placeholder="아이디" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
+      <input type="text" id="authId" placeholder="아이디" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authLogin()">
       <input type="password" id="authPw" placeholder="비밀번호" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authLogin()">
       <div id="authError" style="color:#c62828;font-size:12px;display:none;">아이디 또는 비밀번호가 일치하지 않습니다.</div>
       <button onclick="authLogin()" style="width:100%;padding:10px;border:none;border-radius:6px;background:#1a73e8;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">로그인</button>
@@ -556,6 +556,16 @@
         </ol>
       </details>
     </div>
+  </div>
+</div>
+
+<!-- Auth Empty Field Notice Modal -->
+<div class="modal-overlay" id="authNoticeModal">
+  <div class="modal" style="max-width:340px;text-align:center;">
+    <div style="font-size:36px;margin-bottom:8px;">⚠️</div>
+    <h2 style="margin-bottom:8px;font-size:16px;">입력 확인</h2>
+    <p id="authNoticeMsg" style="font-size:13px;color:#666;margin-bottom:16px;"></p>
+    <button onclick="closeAuthNotice()" style="width:100%;padding:9px;border:none;border-radius:6px;background:#1a73e8;color:#fff;font-size:13px;font-weight:600;cursor:pointer;">확인</button>
   </div>
 </div>
 
@@ -878,9 +888,24 @@ function openModal() {
   }
 }
 
+function showAuthNotice(msg, focusId) {
+  document.getElementById('authNoticeMsg').textContent = msg;
+  document.getElementById('authNoticeModal').classList.add('active');
+  if (focusId) {
+    setTimeout(() => { const el = document.getElementById(focusId); if (el) el.focus(); }, 0);
+  }
+}
+
+function closeAuthNotice() {
+  document.getElementById('authNoticeModal').classList.remove('active');
+}
+
 function authLogin() {
   const id = document.getElementById('authId').value.trim();
   const pw = document.getElementById('authPw').value;
+  if (!id && !pw) { showAuthNotice('아이디와 비밀번호를 입력해주세요.', 'authId'); return; }
+  if (!id) { showAuthNotice('아이디를 입력해주세요.', 'authId'); return; }
+  if (!pw) { showAuthNotice('비밀번호를 입력해주세요.', 'authPw'); return; }
   if (_creds.some(c => id === _d(c.a) && pw === _d(c.b))) {
     authPassed = true;
     sessionStorage.setItem('authPassed', 'true');
@@ -909,6 +934,16 @@ document.getElementById('authModal').addEventListener('click', e => {
 });
 document.getElementById('tokenModal').addEventListener('click', e => {
   if (e.target === e.currentTarget) e.target.classList.remove('active');
+});
+document.getElementById('authNoticeModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeAuthNotice();
+});
+document.addEventListener('keydown', e => {
+  const m = document.getElementById('authNoticeModal');
+  if (m && m.classList.contains('active') && (e.key === 'Escape' || e.key === 'Enter')) {
+    e.preventDefault();
+    closeAuthNotice();
+  }
 });
 
 // ══════════════════════════════════════════════
