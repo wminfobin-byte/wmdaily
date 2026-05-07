@@ -559,6 +559,20 @@
   </div>
 </div>
 
+<!-- RAW Folder Connect Prompt Modal -->
+<div class="modal-overlay" id="rawConnectModal">
+  <div class="modal" style="max-width:440px;text-align:center;">
+    <button class="modal-close" onclick="dismissRawConnectPrompt()">&times;</button>
+    <div style="font-size:42px;margin-bottom:12px;" id="rawConnectIcon">📁</div>
+    <h2 id="rawConnectTitle" style="margin-bottom:8px;font-size:18px;">RAW 공유폴더 연결</h2>
+    <p id="rawConnectDesc" style="font-size:13px;color:#666;margin-bottom:18px;line-height:1.6;"></p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <button id="rawConnectGoBtn" onclick="rawConnectFromPrompt()" style="width:100%;padding:11px;border:none;border-radius:6px;background:#1a73e8;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">RAW 폴더 연결하기</button>
+      <button onclick="dismissRawConnectPrompt()" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#666;font-size:13px;cursor:pointer;">다음에 하기</button>
+    </div>
+  </div>
+</div>
+
 <!-- Main Content -->
 <div class="main-content" id="mainContent">
   <div id="filterSection" class="hidden">
@@ -821,7 +835,11 @@ function applyAuthUI() {
   document.getElementById('btnLogout').style.display = '';
   restoreSyncTime();
   // RAW 폴더 연결 UI는 로그인 이후 + 핸들 복원 후 표시
-  if (typeof restoreRawDir === 'function') restoreRawDir().catch(() => {});
+  if (typeof restoreRawDir === 'function') {
+    restoreRawDir().then(() => {
+      if (typeof maybePromptRawConnect === 'function') maybePromptRawConnect();
+    }).catch(() => {});
+  }
   if (typeof updateRawDirUI === 'function') updateRawDirUI();
   // 관리자 모드 진입 — 열람자 자동 fetch는 정지 (RAW 폴링이 담당)
   if (typeof stopViewerAutoFetch === 'function') stopViewerAutoFetch();
@@ -1924,6 +1942,48 @@ async function onClickRawConnect() {
   } else {
     await connectRawDir();
   }
+}
+
+// ── 로그인 직후 RAW 폴더 자동 연결 안내 모달 ──
+// 'reconnect' = 핸들은 있는데 권한 만료(재부팅 후), 'first' = 한 번도 연결 안 함
+function maybePromptRawConnect() {
+  if (!authPassed) return;
+  if (!isRawApiSupported()) return;
+  if (sessionStorage.getItem('rawConnectPromptDismissed') === '1') return;
+  let mode = null;
+  if (rawState.rootHandle && rawState.permission !== 'granted' && rawState.permission !== 'denied') {
+    mode = 'reconnect';
+  } else if (!rawState.rootHandle) {
+    mode = 'first';
+  }
+  if (!mode) return;
+  const icon = document.getElementById('rawConnectIcon');
+  const title = document.getElementById('rawConnectTitle');
+  const desc = document.getElementById('rawConnectDesc');
+  const goBtn = document.getElementById('rawConnectGoBtn');
+  if (mode === 'reconnect') {
+    icon.textContent = '🔒';
+    title.textContent = 'RAW 폴더 권한이 만료되었습니다';
+    desc.innerHTML = `이전에 연결했던 <b>${rawState.rootName || 'RAW'}</b> 폴더의 권한이 만료되어 다시 부여해야 합니다.<br>아래 버튼을 누르면 권한 요청 창이 뜹니다.`;
+    goBtn.textContent = '권한 다시 부여';
+  } else {
+    icon.textContent = '📁';
+    title.textContent = 'RAW 공유폴더를 연결하시겠습니까?';
+    desc.innerHTML = `회사 공유폴더(<b>Y:\\700_영업관리실\\04_영업관리실 성과\\09_WM_데일리 성과 RAW</b>)와 양방향 동기화하려면 폴더 연결이 필요합니다.<br>지금 연결하지 않아도 [데이터 업로드] 창에서 언제든 연결할 수 있습니다.`;
+    goBtn.textContent = 'RAW 폴더 연결하기';
+  }
+  document.getElementById('rawConnectModal').classList.add('active');
+}
+
+function dismissRawConnectPrompt() {
+  document.getElementById('rawConnectModal').classList.remove('active');
+  sessionStorage.setItem('rawConnectPromptDismissed', '1');
+}
+
+async function rawConnectFromPrompt() {
+  document.getElementById('rawConnectModal').classList.remove('active');
+  sessionStorage.setItem('rawConnectPromptDismissed', '1');
+  await onClickRawConnect();
 }
 
 // ── 열람자(비로그인) 측 GitHub data.json 30초 자동 fetch ──
