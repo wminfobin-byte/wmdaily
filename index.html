@@ -889,11 +889,15 @@ function openModal() {
 }
 
 function showAuthNotice(msg, focusId) {
-  document.getElementById('authNoticeMsg').textContent = msg;
-  document.getElementById('authNoticeModal').classList.add('active');
-  if (focusId) {
-    setTimeout(() => { const el = document.getElementById(focusId); if (el) el.focus(); }, 0);
-  }
+  // active 클래스 부여를 한 틱 미뤄야 같은 Enter 이벤트의 document 버블링 핸들러에 잡혀 즉시 닫히지 않음
+  setTimeout(() => {
+    document.getElementById('authNoticeMsg').textContent = msg;
+    document.getElementById('authNoticeModal').classList.add('active');
+    if (focusId) {
+      const el = document.getElementById(focusId);
+      if (el) el.focus();
+    }
+  }, 0);
 }
 
 function closeAuthNotice() {
@@ -941,7 +945,7 @@ document.getElementById('authNoticeModal').addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => {
   const m = document.getElementById('authNoticeModal');
-  if (m && m.classList.contains('active') && e.key === 'Escape') {
+  if (m && m.classList.contains('active') && (e.key === 'Escape' || e.key === 'Enter')) {
     e.preventDefault();
     closeAuthNotice();
   }
