@@ -538,7 +538,7 @@
 <!-- GitHub Token Modal -->
 <div class="modal-overlay" id="tokenModal">
   <div class="modal" style="max-width:420px;text-align:center;">
-    <button class="modal-close" onclick="document.getElementById('tokenModal').classList.remove('active')">&times;</button>
+    <button class="modal-close" onclick="closeTokenModalCanceled()">&times;</button>
     <h2 style="margin-bottom:8px;">GitHub 동기화 설정</h2>
     <p style="font-size:13px;color:#666;margin-bottom:16px;">최초 1회만 설정하면 이후엔 버튼만 누르면 됩니다.</p>
     <div style="display:flex;flex-direction:column;gap:10px;align-items:center;">
@@ -949,7 +949,7 @@ document.getElementById('authModal').addEventListener('click', e => {
   if (e.target === e.currentTarget) e.target.classList.remove('active');
 });
 document.getElementById('tokenModal').addEventListener('click', e => {
-  if (e.target === e.currentTarget) e.target.classList.remove('active');
+  if (e.target === e.currentTarget) closeTokenModalCanceled();
 });
 document.getElementById('authNoticeModal').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeAuthNotice();
@@ -4380,7 +4380,11 @@ async function saveAccAll() {
     setTimeout(() => { btn.innerHTML = origHTML; }, 3000);
   } catch (err) {
     btn.innerHTML = origHTML;
-    showStatus('로컬 저장은 완료되었으나 동기화에 실패했습니다. [🔄 동기화] 버튼을 다시 눌러주세요.', 'warn');
+    if (err && err.code === 'TOKEN_CANCELED') {
+      showStatus('동기화가 취소되었습니다. 토큰 입력 후 [🔄 동기화]를 다시 눌러주세요.', 'warn');
+    } else {
+      showStatus('로컬 저장은 완료되었으나 동기화에 실패했습니다. [🔄 동기화] 버튼을 다시 눌러주세요.', 'warn');
+    }
   } finally {
     btn.style.opacity = '';
     btn.style.pointerEvents = '';
@@ -4454,6 +4458,20 @@ const GH_BRANCH = 'main';
 
 function getGhToken() { return localStorage.getItem('gh_sync_token') || ''; }
 
+// 토큰 모달이 syncToGitHub 흐름 안에서 띄워졌을 때 입력값을 전달할 콜백
+let _pendingTokenResolve = null;
+function _resolvePendingToken(token) {
+  if (_pendingTokenResolve) {
+    const r = _pendingTokenResolve;
+    _pendingTokenResolve = null;
+    r(token);
+  }
+}
+function closeTokenModalCanceled() {
+  document.getElementById('tokenModal').classList.remove('active');
+  _resolvePendingToken(null);
+}
+
 function saveTokenAndSync() {
   const token = document.getElementById('ghToken').value.trim();
   if (!token) {
@@ -4463,9 +4481,16 @@ function saveTokenAndSync() {
   }
   localStorage.setItem('gh_sync_token', token);
   document.getElementById('tokenModal').classList.remove('active');
-  syncToGitHub(false).then(() => {
+  // 대기 중인 syncToGitHub가 있으면 그 흐름이 이어서 실제 동기화를 처리
+  if (_pendingTokenResolve) {
+    _resolvePendingToken(token);
+    return;
+  }
+  // 대기자가 없는 경우(직접 토큰 설정)에만 단발 동기화 실행 — 누적 데이터 포함
+  syncToGitHub(true).then(() => {
     showStatus('동기화 완료!', 'success');
   }).catch(err => {
+    if (err && err.code === 'TOKEN_CANCELED') return;
     showStatus('동기화 오류: ' + (err.message || err), 'error');
   });
 }
@@ -4523,13 +4548,19 @@ function mergeSharedData(remote, local) {
 }
 
 async function syncToGitHub(includeAccumulated) {
-  const token = getGhToken();
+  let token = getGhToken();
   if (!token) {
     document.getElementById('ghToken').value = '';
     document.getElementById('tokenError').style.display = 'none';
     document.getElementById('tokenModal').classList.add('active');
     document.getElementById('ghToken').focus();
-    return;
+    // 사용자 입력 대기 (saveTokenAndSync 또는 closeTokenModalCanceled가 resolve)
+    token = await new Promise(resolve => { _pendingTokenResolve = resolve; });
+    if (!token) {
+      const err = new Error('동기화가 취소되었습니다.');
+      err.code = 'TOKEN_CANCELED';
+      throw err;
+    }
   }
 
   try {
@@ -4625,8 +4656,8 @@ async function syncToGitHub(includeAccumulated) {
       if (res.status === 401 || res.status === 403) {
         localStorage.removeItem('gh_sync_token');
         showStatus('토큰이 유효하지 않습니다. 다시 입력해주세요.', 'error');
-        syncToGitHub(false).catch(() => {}); // 토큰 모달 다시 열기
-        return;
+        // 새 토큰 받아서 같은 동기화(누적 포함 여부 보존) 재시도
+        return await syncToGitHub(includeAccumulated);
       }
       throw new Error(err.message || `HTTP ${res.status}`);
     }
