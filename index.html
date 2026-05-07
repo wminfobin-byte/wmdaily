@@ -419,8 +419,8 @@
     <button class="modal-close" onclick="document.getElementById('authModal').classList.remove('active')">&times;</button>
     <h2 style="margin-bottom:16px;">업로드 인증</h2>
     <div style="display:flex;flex-direction:column;gap:10px;align-items:center;">
-      <input type="text" id="authId" placeholder="아이디" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authLogin()">
-      <input type="password" id="authPw" placeholder="비밀번호" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authLogin()">
+      <input type="text" id="authId" placeholder="아이디" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authInputEnter()">
+      <input type="password" id="authPw" placeholder="비밀번호" style="width:100%;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px;" onkeydown="if(event.key==='Enter')authInputEnter()">
       <div id="authError" style="color:#c62828;font-size:12px;display:none;">아이디 또는 비밀번호가 일치하지 않습니다.</div>
       <button onclick="authLogin()" style="width:100%;padding:10px;border:none;border-radius:6px;background:#1a73e8;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">로그인</button>
     </div>
@@ -885,6 +885,17 @@ function openModal() {
     document.getElementById('authError').style.display = 'none';
     document.getElementById('authModal').classList.add('active');
     document.getElementById('authId').focus();
+  }
+}
+
+// 인풋에서 Enter 처리: 안내 모달이 떠 있으면 닫기, 아니면 로그인 시도
+// (모달 떠있는 상태에서 인풋 포커스로 Enter 누를 때 authLogin이 다시 호출되어 모달이 재표시되는 것을 방지)
+function authInputEnter() {
+  const m = document.getElementById('authNoticeModal');
+  if (m && m.classList.contains('active')) {
+    closeAuthNotice();
+  } else {
+    authLogin();
   }
 }
 
