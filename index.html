@@ -4476,6 +4476,13 @@ function _verifyNum(v) {
   return isNaN(n) ? 0 : n;
 }
 
+// CMS 파일에 있어도 대시보드 비교 대상이 아닌 센터(지점) 접두어 — 여기 추가하면 검증에서 제외됨
+const VERIFY_EXCLUDE_PREFIXES = ['(R_군자)'];
+function _verifyIsExcluded(name) {
+  if (!name.startsWith('(R_')) return true;
+  return VERIFY_EXCLUDE_PREFIXES.some(p => name.startsWith(p));
+}
+
 function handleVerifyFile(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -4492,11 +4499,11 @@ function handleVerifyFile(event) {
     for (const r of rows) {
       const name = String(r[1] || '').trim();
       if (!name) continue;
-      if (!name.startsWith('(R_')) continue;
       if (!firstDate) {
         const dp = datePart(r[0]);
         if (dp) firstDate = dp;
       }
+      if (_verifyIsExcluded(name)) continue;
       cmsByName.set(name, {
         db: _verifyNum(r[2]),       // C열
         actual: _verifyNum(r[14]),  // O열
@@ -4523,19 +4530,23 @@ function handleVerifyFile(event) {
       }
     }
 
+    // 비교: (R_군자)·(R_)없음은 이미 제외됨. 그 외 인원만 대상.
     const mismatches = [];
-    const cmsOnly = [];
+    const cmsOnly = [];   // CMS엔 있으나 대시보드 리스트엔 없는 사람 (제외 대상 아님 → 누락 의심)
+    let comparedCount = 0;
     cmsByName.forEach((cms, name) => {
       const dash = dashByName.get(name);
       if (!dash) {
         if (cms.db > 0 || cms.daily > 0 || cms.actual > 0) cmsOnly.push({ name, cms });
         return;
       }
+      comparedCount++;
       if (cms.db !== dash.db) mismatches.push({ name, item: 'DB수', cms: cms.db, dash: dash.db, diff: cms.db - dash.db });
       if (cms.daily !== dash.daily) mismatches.push({ name, item: '일계약', cms: cms.daily, dash: dash.daily, diff: cms.daily - dash.daily });
       if (cms.actual !== dash.actual) mismatches.push({ name, item: '실계약', cms: cms.actual, dash: dash.actual, diff: cms.actual - dash.actual });
     });
 
+    // 대시보드에는 당일 데이터가 있는데 CMS 파일엔 없는 사람
     const dashOnly = [];
     dashByName.forEach((dash, name) => {
       if (cmsByName.has(name)) return;
@@ -4546,12 +4557,12 @@ function handleVerifyFile(event) {
     const total = mismatches.length + cmsOnly.length + dashOnly.length;
 
     if (total === 0 && dateMatch) {
-      _setVerifyStatus(`일치 ✓ (${cmsByName.size}명)`, '#2e7d32');
+      _setVerifyStatus(`일치 ✓ (${comparedCount}명)`, '#2e7d32');
       return;
     }
 
     _setVerifyStatus(`불일치 ${total}건 — 모달 확인`, '#c62828');
-    _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, cmsCount: cmsByName.size });
+    _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, comparedCount });
   });
 }
 
@@ -4564,14 +4575,14 @@ function _setVerifyStatus(text, color) {
   box.classList.add('loaded');
 }
 
-function _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, cmsCount }) {
+function _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, comparedCount }) {
   const body = document.getElementById('verifyResultBody');
   const summary = document.getElementById('verifyResultSummary');
 
-  let parts = [`CMS 파일 ${cmsCount}명`, `대시보드 당일: ${lastLatestDate}`];
+  let parts = [`비교 대상 ${comparedCount}명`, `대시보드 당일: ${lastLatestDate}`];
   if (firstDate && firstDate !== lastLatestDate) parts.push(`<span style="color:#c62828;">⚠ 파일 날짜 ${firstDate} (대시보드 당일과 다름)</span>`);
   if (mismatches.length) parts.push(`값 불일치 ${mismatches.length}건`);
-  if (cmsOnly.length) parts.push(`CMS만 ${cmsOnly.length}명`);
+  if (cmsOnly.length) parts.push(`CMS엔 있으나 대시보드 리스트에 없음 ${cmsOnly.length}명`);
   if (dashOnly.length) parts.push(`대시보드만 ${dashOnly.length}명`);
   summary.innerHTML = parts.join(' · ');
 
@@ -4591,7 +4602,7 @@ function _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch
   }
 
   if (cmsOnly.length) {
-    html += `<div style="font-size:13px;font-weight:600;margin:14px 0 6px;color:#6a1b9a;">CMS 파일에만 있음 (${cmsOnly.length}명)</div>`;
+    html += `<div style="font-size:13px;font-weight:600;margin:14px 0 6px;color:#6a1b9a;">CMS엔 있으나 대시보드 리스트에 없음 (${cmsOnly.length}명) <span style="font-weight:400;color:#888;">— 명단 누락/제외 여부 확인 필요</span></div>`;
     html += `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="${thStyle}text-align:left;">이름</th><th style="${thStyle}">DB수</th><th style="${thStyle}">일계약</th><th style="${thStyle}">실계약</th></tr></thead><tbody>`;
     for (const m of cmsOnly) {
       html += `<tr><td style="${tdStyle}">${m.name}</td><td style="${tdStyle}text-align:right;">${m.cms.db}</td><td style="${tdStyle}text-align:right;">${m.cms.daily}</td><td style="${tdStyle}text-align:right;">${m.cms.actual}</td></tr>`;
