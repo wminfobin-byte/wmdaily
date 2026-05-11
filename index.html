@@ -472,6 +472,14 @@
         </div>
         <input type="file" accept=".xlsx,.xls" id="fileContract">
       </div>
+      <div class="upload-box" id="uploadVerify">
+        <div class="icon">🔍</div>
+        <div class="upload-info">
+          <div class="label">15-7 일일성과 <span class="sub">yyyy-mm-dd</span><span class="status status-inline" id="verifyStatus"></span></div>
+          <div style="font-size:11px;color:#999;margin-top:2px;">업로드 시 대시보드 당일 성과와 자동 비교 · 일치하면 조용히 통과, 불일치면 결과 모달 표시</div>
+        </div>
+        <input type="file" accept=".xls,.xlsx" id="fileVerify" onchange="handleVerifyFile(event)">
+      </div>
     </div>
     <div class="storage-row" style="flex-wrap:nowrap;">
       <span class="storage-label" style="flex-shrink:0;">저장 현황:</span>
@@ -580,6 +588,16 @@
       <button id="rawConnectGoBtn" onclick="rawConnectFromPrompt()" style="width:100%;padding:11px;border:none;border-radius:6px;background:#1a73e8;color:#fff;font-size:14px;font-weight:600;cursor:pointer;">RAW 폴더 연결하기</button>
       <button onclick="dismissRawConnectPrompt()" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#666;font-size:13px;cursor:pointer;">다음에 하기</button>
     </div>
+  </div>
+</div>
+
+<!-- CMS 검증 결과 모달 (불일치 시에만 표시) -->
+<div class="modal-overlay" id="verifyModal">
+  <div class="modal" style="max-width:760px;">
+    <button class="modal-close" onclick="document.getElementById('verifyModal').classList.remove('active')">&times;</button>
+    <h2 style="margin-bottom:6px;font-size:17px;">🔍 CMS 검증 결과 — 불일치 항목이 있어요</h2>
+    <p id="verifyResultSummary" style="font-size:12px;color:#666;margin-bottom:12px;"></p>
+    <div id="verifyResultBody" style="max-height:60vh;overflow:auto;"></div>
   </div>
 </div>
 
@@ -4448,6 +4466,165 @@ function clearAccStorage(tab) {
   refreshAccDisplay();
   alert(`${tabLabel} 누적 데이터가 초기화되었습니다.`);
 }
+
+// ══════════════════════════════════════════════
+// ── CMS 검증 (당일 성과 일치 여부 확인) ──
+// ══════════════════════════════════════════════
+function _verifyNum(v) {
+  if (v === '' || v == null) return 0;
+  const n = Number(String(v).replace(/,/g, '').trim());
+  return isNaN(n) ? 0 : n;
+}
+
+function handleVerifyFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+
+  if (!lastGroupedMain || !lastLatestDate) {
+    alert('대시보드가 아직 빌드되지 않았어요. 데이터 업로드 후 대시보드가 표시된 상태에서 다시 시도해주세요.');
+    return;
+  }
+
+  readExcel(file, (rows) => {
+    const cmsByName = new Map();
+    let firstDate = null;
+    for (const r of rows) {
+      const name = String(r[1] || '').trim();
+      if (!name) continue;
+      if (!name.startsWith('(R_')) continue;
+      if (!firstDate) {
+        const dp = datePart(r[0]);
+        if (dp) firstDate = dp;
+      }
+      cmsByName.set(name, {
+        db: _verifyNum(r[2]),       // C열
+        actual: _verifyNum(r[14]),  // O열
+        daily: _verifyNum(r[15]),   // P열
+      });
+    }
+
+    if (cmsByName.size === 0) {
+      alert('파일에서 검증 가능한 행을 찾지 못했어요.\nB열에 "(R_지점)이름" 형식의 상담원이 있는지 확인해주세요.');
+      return;
+    }
+
+    const dashByName = new Map();
+    for (const groups of [lastGroupedMain, lastGroupedTalkis]) {
+      if (!groups) continue;
+      for (const [, persons] of groups) {
+        for (const p of persons) {
+          dashByName.set(p.name, {
+            db: p.todayDb || 0,
+            daily: p.todayDailyContract || 0,
+            actual: p.todayActualContract || 0,
+          });
+        }
+      }
+    }
+
+    const mismatches = [];
+    const cmsOnly = [];
+    cmsByName.forEach((cms, name) => {
+      const dash = dashByName.get(name);
+      if (!dash) {
+        if (cms.db > 0 || cms.daily > 0 || cms.actual > 0) cmsOnly.push({ name, cms });
+        return;
+      }
+      if (cms.db !== dash.db) mismatches.push({ name, item: 'DB수', cms: cms.db, dash: dash.db, diff: cms.db - dash.db });
+      if (cms.daily !== dash.daily) mismatches.push({ name, item: '일계약', cms: cms.daily, dash: dash.daily, diff: cms.daily - dash.daily });
+      if (cms.actual !== dash.actual) mismatches.push({ name, item: '실계약', cms: cms.actual, dash: dash.actual, diff: cms.actual - dash.actual });
+    });
+
+    const dashOnly = [];
+    dashByName.forEach((dash, name) => {
+      if (cmsByName.has(name)) return;
+      if (dash.db > 0 || dash.daily > 0 || dash.actual > 0) dashOnly.push({ name, dash });
+    });
+
+    const dateMatch = firstDate ? (firstDate === lastLatestDate) : true;
+    const total = mismatches.length + cmsOnly.length + dashOnly.length;
+
+    if (total === 0 && dateMatch) {
+      _setVerifyStatus(`일치 ✓ (${cmsByName.size}명)`, '#2e7d32');
+      return;
+    }
+
+    _setVerifyStatus(`불일치 ${total}건 — 모달 확인`, '#c62828');
+    _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, cmsCount: cmsByName.size });
+  });
+}
+
+function _setVerifyStatus(text, color) {
+  const box = document.getElementById('uploadVerify');
+  const st = document.getElementById('verifyStatus');
+  if (!box || !st) return;
+  st.textContent = text;
+  st.style.color = color || '';
+  box.classList.add('loaded');
+}
+
+function _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, cmsCount }) {
+  const body = document.getElementById('verifyResultBody');
+  const summary = document.getElementById('verifyResultSummary');
+
+  let parts = [`CMS 파일 ${cmsCount}명`, `대시보드 당일: ${lastLatestDate}`];
+  if (firstDate && firstDate !== lastLatestDate) parts.push(`<span style="color:#c62828;">⚠ 파일 날짜 ${firstDate} (대시보드 당일과 다름)</span>`);
+  if (mismatches.length) parts.push(`값 불일치 ${mismatches.length}건`);
+  if (cmsOnly.length) parts.push(`CMS만 ${cmsOnly.length}명`);
+  if (dashOnly.length) parts.push(`대시보드만 ${dashOnly.length}명`);
+  summary.innerHTML = parts.join(' · ');
+
+  const thStyle = 'padding:6px 8px;border:1px solid #ddd;background:#f5f5f5;';
+  const tdStyle = 'padding:6px 8px;border:1px solid #ddd;';
+  let html = '';
+
+  if (mismatches.length) {
+    html += `<div style="font-size:13px;font-weight:600;margin:10px 0 6px;color:#c62828;">값 불일치 (${mismatches.length}건)</div>`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="${thStyle}text-align:left;">이름</th><th style="${thStyle}">항목</th><th style="${thStyle}">CMS값</th><th style="${thStyle}">대시보드값</th><th style="${thStyle}">차이</th></tr></thead><tbody>`;
+    for (const m of mismatches) {
+      const diffStr = m.diff > 0 ? `+${m.diff}` : `${m.diff}`;
+      const diffColor = m.diff > 0 ? '#e65100' : '#1565c0';
+      html += `<tr><td style="${tdStyle}">${m.name}</td><td style="${tdStyle}text-align:center;">${m.item}</td><td style="${tdStyle}text-align:right;">${m.cms}</td><td style="${tdStyle}text-align:right;">${m.dash}</td><td style="${tdStyle}text-align:right;color:${diffColor};font-weight:600;">${diffStr}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if (cmsOnly.length) {
+    html += `<div style="font-size:13px;font-weight:600;margin:14px 0 6px;color:#6a1b9a;">CMS 파일에만 있음 (${cmsOnly.length}명)</div>`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="${thStyle}text-align:left;">이름</th><th style="${thStyle}">DB수</th><th style="${thStyle}">일계약</th><th style="${thStyle}">실계약</th></tr></thead><tbody>`;
+    for (const m of cmsOnly) {
+      html += `<tr><td style="${tdStyle}">${m.name}</td><td style="${tdStyle}text-align:right;">${m.cms.db}</td><td style="${tdStyle}text-align:right;">${m.cms.daily}</td><td style="${tdStyle}text-align:right;">${m.cms.actual}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  if (dashOnly.length) {
+    html += `<div style="font-size:13px;font-weight:600;margin:14px 0 6px;color:#01579b;">대시보드에만 있음 (${dashOnly.length}명)</div>`;
+    html += `<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th style="${thStyle}text-align:left;">이름</th><th style="${thStyle}">DB수</th><th style="${thStyle}">일계약</th><th style="${thStyle}">실계약</th></tr></thead><tbody>`;
+    for (const m of dashOnly) {
+      html += `<tr><td style="${tdStyle}">${m.name}</td><td style="${tdStyle}text-align:right;">${m.dash.db}</td><td style="${tdStyle}text-align:right;">${m.dash.daily}</td><td style="${tdStyle}text-align:right;">${m.dash.actual}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  body.innerHTML = html;
+  document.getElementById('verifyModal').classList.add('active');
+}
+
+// 단축키: Ctrl+Shift+V → 파일 선택
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.shiftKey && (e.key === 'V' || e.key === 'v')) {
+    const fi = document.getElementById('fileVerify');
+    if (fi) { e.preventDefault(); fi.click(); }
+  }
+  const vm = document.getElementById('verifyModal');
+  if (vm && vm.classList.contains('active') && e.key === 'Escape') vm.classList.remove('active');
+});
+document.addEventListener('DOMContentLoaded', () => {
+  const vm = document.getElementById('verifyModal');
+  if (vm) vm.addEventListener('click', e => { if (e.target === e.currentTarget) vm.classList.remove('active'); });
+});
 
 // ══════════════════════════════════════════════
 // ── GitHub 동기화 ──
