@@ -86,6 +86,9 @@
   .btn-file-toggle:hover { text-decoration: underline; }
   .file-toggle-caret { display: inline-block; transition: transform 0.15s; font-size: 9px; color: #888; }
   .upload-box input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; z-index: 1; }
+  .upload-box .btn-verify-run { position: relative; z-index: 2; flex-shrink: 0; padding: 8px 14px; border: none; border-radius: 8px; background: #1a73e8; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: background 0.15s; }
+  .upload-box .btn-verify-run:hover { background: #1557b0; }
+  .upload-box .btn-verify-run:disabled { background: #cfd4da; cursor: default; pointer-events: none; }
   .file-item { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; color: #333; }
   .file-item .file-icon { color: #34a853; font-size: 13px; }
   .file-item .file-name { font-weight: 500; word-break: break-all; }
@@ -476,8 +479,9 @@
         <div class="icon">🔍</div>
         <div class="upload-info">
           <div class="label">15-7 일일성과 <span class="sub">yyyy-mm-dd</span><span class="status status-inline" id="verifyStatus"></span></div>
-          <div style="font-size:11px;color:#999;margin-top:2px;">업로드 시 대시보드 당일 성과와 자동 비교 · 일치하면 조용히 통과, 불일치면 결과 모달 표시</div>
+          <div style="font-size:11px;color:#999;margin-top:2px;">화면 업로드 또는 RAW 폴더(15-7 일일성과)에 파일을 넣으면 자동 인식 · <b>[데이터 검증]</b> 버튼으로 대시보드 당일 성과와 비교</div>
         </div>
+        <button type="button" class="btn-verify-run" id="btnVerifyRun" onclick="runVerify()" disabled>🔍 데이터 검증</button>
         <input type="file" accept=".xls,.xlsx" id="fileVerify" onchange="handleVerifyFile(event)">
       </div>
     </div>
@@ -1601,6 +1605,7 @@ const RAW_SUBDIRS = {
   roster:   '2-8 그룹표기엑셀',
   db:       '1-2 고객관리 DB수',
   contract: '1-5 신청자관리',
+  verify:   '15-7 일일성과',
 };
 const rawState = {
   rootHandle: null,        // FileSystemDirectoryHandle (root)
@@ -1696,6 +1701,7 @@ async function connectRawDir() {
   updateRawDirUI();
   showStatus(`RAW 폴더 연결됨: ${rawState.rootName}`, 'success');
   startRawPolling();
+  loadLatestVerifyFromRaw();
   return true;
 }
 
@@ -1714,6 +1720,7 @@ async function restoreRawDir() {
         rawState.subHandles[type] = await handle.getDirectoryHandle(name, { create: true });
       }
       startRawPolling();
+      loadLatestVerifyFromRaw();
     } catch (err) {
       console.warn('RAW 하위 폴더 캐싱 실패:', err);
     }
@@ -1744,6 +1751,7 @@ async function reconnectRawDirOnDemand() {
       rawState.subHandles[type] = await rawState.rootHandle.getDirectoryHandle(name, { create: true });
     }
     startRawPolling();
+    loadLatestVerifyFromRaw();
   } catch (err) {
     console.warn('하위 폴더 재캐싱 실패:', err);
   }
@@ -1775,6 +1783,39 @@ async function writeFileToRaw(type, fileName, arrayBuffer) {
   } catch (err) {
     console.error('RAW 폴더 쓰기 실패:', fileName, err);
     return { ok: false, reason: 'write-failed', error: err };
+  }
+}
+
+// RAW의 15-7 일일성과 폴더에서 가장 최근(수정시각 기준) 파일을 읽어 pendingVerify에 적재.
+// 폴더 연결/복원 시 호출 — 폴링 전부터 폴더에 있던 파일도 [데이터 검증]에 바로 쓸 수 있게 함.
+async function loadLatestVerifyFromRaw() {
+  const sub = rawState.subHandles && rawState.subHandles.verify;
+  if (!sub) return;
+  let latest = null;
+  try {
+    for await (const [name, handle] of sub.entries()) {
+      if (!handle || handle.kind !== 'file') continue;
+      if (!/\.(xlsx|xls)$/i.test(name)) continue;
+      let file;
+      try { file = await handle.getFile(); } catch { continue; }
+      if (!latest || file.lastModified > latest.mtime) latest = { name, file, mtime: file.lastModified };
+    }
+  } catch (err) {
+    console.warn('[verify] RAW 폴더 읽기 실패:', err);
+    return;
+  }
+  if (!latest) return;
+  try {
+    const buf = await latest.file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).slice(1);
+    if (_loadVerifyFromRows(rows, latest.name)) {
+      const fd = pendingVerify.firstDate ? ` (${pendingVerify.firstDate})` : '';
+      _setVerifyStatus(`RAW 폴더: ${latest.name}${fd} — [데이터 검증]을 눌러주세요`, '#1a73e8');
+    }
+  } catch (err) {
+    console.warn('[verify] 파일 파싱 실패:', err);
   }
 }
 
@@ -1829,6 +1870,14 @@ async function processRawFile(type, name, arrayBuffer) {
     await saveFileMeta('contract', `${name} (${monthKey})`, data.length);
     contractData = mergeAllContracts();
     return true;
+  } else if (type === 'verify') {
+    // 일일성과 파일은 RAW 보관 전용 — pendingVerify에만 적재. IDB/GitHub 갱신은 트리거하지 않음.
+    if (_loadVerifyFromRows(data, name)) {
+      const fd = pendingVerify.firstDate ? ` (${pendingVerify.firstDate})` : '';
+      _setVerifyStatus(`RAW 감지: ${name}${fd} — [데이터 검증]을 눌러주세요`, '#1a73e8');
+      showStatus(`RAW 폴더에서 일일성과 파일 감지: ${name} — [데이터 검증]으로 비교하세요`, 'success');
+    }
+    return false;
   }
   return false;
 }
@@ -2599,6 +2648,7 @@ function setupDragDrop(boxId, inputId) {
 setupDragDrop('uploadRoster', 'fileRoster');
 setupDragDrop('uploadDb', 'fileDb');
 setupDragDrop('uploadContract', 'fileContract');
+setupDragDrop('uploadVerify', 'fileVerify');
 
 // ══════════════════════════════════════════════
 // ── File Upload Handlers ──
@@ -4483,87 +4533,120 @@ function _verifyIsExcluded(name) {
   return VERIFY_EXCLUDE_PREFIXES.some(p => name.startsWith(p));
 }
 
+// 업로드/폴더 감지된 일일성과 파일의 파싱 결과 보관 — [데이터 검증] 버튼이 사용
+let pendingVerify = null;  // { cmsByName, firstDate, fileName }
+
+// 일일성과 rows를 파싱해 pendingVerify에 적재 + [데이터 검증] 버튼 활성화. 적재 성공 시 true.
+// UI 업로드와 RAW 폴더 감지가 공용으로 호출.
+function _loadVerifyFromRows(rows, fileName, opts) {
+  const cmsByName = new Map();
+  let firstDate = null;
+  for (const r of rows) {
+    const name = String(r[1] || '').trim();
+    if (!name) continue;
+    if (!firstDate) {
+      const dp = datePart(r[0]);
+      if (dp) firstDate = dp;
+    }
+    if (_verifyIsExcluded(name)) continue;
+    cmsByName.set(name, {
+      db: _verifyNum(r[2]),       // C열
+      actual: _verifyNum(r[14]),  // O열
+      daily: _verifyNum(r[15]),   // P열
+    });
+  }
+  if (cmsByName.size === 0) {
+    if (opts && opts.alertOnEmpty) {
+      alert('파일에서 검증 가능한 행을 찾지 못했어요.\nB열에 "(R_지점)이름" 형식의 상담원이 있는지 확인해주세요.');
+    }
+    return false;
+  }
+  pendingVerify = { cmsByName, firstDate, fileName };
+  const btn = document.getElementById('btnVerifyRun');
+  if (btn) btn.disabled = false;
+  return true;
+}
+
+// 일일성과 파일 업로드 — 파싱해서 보관 + RAW 폴더(15-7 일일성과)에 저장. 비교는 하지 않음.
 function handleVerifyFile(event) {
   const file = event.target.files[0];
   if (!file) return;
   event.target.value = '';
 
+  readExcel(file, (rows, arrayBuffer) => {
+    if (!_loadVerifyFromRows(rows, file.name, { alertOnEmpty: true })) return;
+    const fd = pendingVerify.firstDate ? ` (${pendingVerify.firstDate})` : '';
+    _setVerifyStatus(`업로드됨: ${file.name}${fd} — [데이터 검증]을 눌러주세요`, '#1a73e8');
+
+    // RAW 공유폴더(15-7 일일성과)에 보관
+    if (rawState.rootHandle && rawState.permission === 'granted') {
+      writeFileToRaw('verify', file.name, arrayBuffer).then(r => {
+        if (!r.ok) showStatus(`RAW 폴더 저장 실패 (${file.name}): ${r.reason || 'unknown'}`, 'error');
+      });
+    }
+  });
+}
+
+// [데이터 검증] 버튼 — 보관된 일일성과 파일과 대시보드 당일 성과를 비교
+function runVerify() {
+  if (!pendingVerify) {
+    alert('먼저 15-7 일일성과 파일을 업로드해주세요.');
+    return;
+  }
   if (!lastGroupedMain || !lastLatestDate) {
     alert('대시보드가 아직 빌드되지 않았어요. 데이터 업로드 후 대시보드가 표시된 상태에서 다시 시도해주세요.');
     return;
   }
+  const { cmsByName, firstDate } = pendingVerify;
 
-  readExcel(file, (rows) => {
-    const cmsByName = new Map();
-    let firstDate = null;
-    for (const r of rows) {
-      const name = String(r[1] || '').trim();
-      if (!name) continue;
-      if (!firstDate) {
-        const dp = datePart(r[0]);
-        if (dp) firstDate = dp;
+  const dashByName = new Map();
+  for (const groups of [lastGroupedMain, lastGroupedTalkis]) {
+    if (!groups) continue;
+    for (const [, persons] of groups) {
+      for (const p of persons) {
+        dashByName.set(p.name, {
+          db: p.todayDb || 0,
+          daily: p.todayDailyContract || 0,
+          actual: p.todayActualContract || 0,
+        });
       }
-      if (_verifyIsExcluded(name)) continue;
-      cmsByName.set(name, {
-        db: _verifyNum(r[2]),       // C열
-        actual: _verifyNum(r[14]),  // O열
-        daily: _verifyNum(r[15]),   // P열
-      });
     }
+  }
 
-    if (cmsByName.size === 0) {
-      alert('파일에서 검증 가능한 행을 찾지 못했어요.\nB열에 "(R_지점)이름" 형식의 상담원이 있는지 확인해주세요.');
+  // 비교: (R_군자)·(R_)없음은 이미 제외됨. 그 외 인원만 대상.
+  const mismatches = [];
+  const cmsOnly = [];   // CMS엔 있으나 대시보드 리스트엔 없는 사람 (제외 대상 아님 → 누락 의심)
+  let comparedCount = 0;
+  cmsByName.forEach((cms, name) => {
+    const dash = dashByName.get(name);
+    if (!dash) {
+      if (cms.db > 0 || cms.daily > 0 || cms.actual > 0) cmsOnly.push({ name, cms });
       return;
     }
-
-    const dashByName = new Map();
-    for (const groups of [lastGroupedMain, lastGroupedTalkis]) {
-      if (!groups) continue;
-      for (const [, persons] of groups) {
-        for (const p of persons) {
-          dashByName.set(p.name, {
-            db: p.todayDb || 0,
-            daily: p.todayDailyContract || 0,
-            actual: p.todayActualContract || 0,
-          });
-        }
-      }
-    }
-
-    // 비교: (R_군자)·(R_)없음은 이미 제외됨. 그 외 인원만 대상.
-    const mismatches = [];
-    const cmsOnly = [];   // CMS엔 있으나 대시보드 리스트엔 없는 사람 (제외 대상 아님 → 누락 의심)
-    let comparedCount = 0;
-    cmsByName.forEach((cms, name) => {
-      const dash = dashByName.get(name);
-      if (!dash) {
-        if (cms.db > 0 || cms.daily > 0 || cms.actual > 0) cmsOnly.push({ name, cms });
-        return;
-      }
-      comparedCount++;
-      if (cms.db !== dash.db) mismatches.push({ name, item: 'DB수', cms: cms.db, dash: dash.db, diff: cms.db - dash.db });
-      if (cms.daily !== dash.daily) mismatches.push({ name, item: '일계약', cms: cms.daily, dash: dash.daily, diff: cms.daily - dash.daily });
-      if (cms.actual !== dash.actual) mismatches.push({ name, item: '실계약', cms: cms.actual, dash: dash.actual, diff: cms.actual - dash.actual });
-    });
-
-    // 대시보드에는 당일 데이터가 있는데 CMS 파일엔 없는 사람
-    const dashOnly = [];
-    dashByName.forEach((dash, name) => {
-      if (cmsByName.has(name)) return;
-      if (dash.db > 0 || dash.daily > 0 || dash.actual > 0) dashOnly.push({ name, dash });
-    });
-
-    const dateMatch = firstDate ? (firstDate === lastLatestDate) : true;
-    const total = mismatches.length + cmsOnly.length + dashOnly.length;
-
-    if (total === 0 && dateMatch) {
-      _setVerifyStatus(`일치 ✓ (${comparedCount}명)`, '#2e7d32');
-      return;
-    }
-
-    _setVerifyStatus(`불일치 ${total}건 — 모달 확인`, '#c62828');
-    _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, comparedCount });
+    comparedCount++;
+    if (cms.db !== dash.db) mismatches.push({ name, item: 'DB수', cms: cms.db, dash: dash.db, diff: cms.db - dash.db });
+    if (cms.daily !== dash.daily) mismatches.push({ name, item: '일계약', cms: cms.daily, dash: dash.daily, diff: cms.daily - dash.daily });
+    if (cms.actual !== dash.actual) mismatches.push({ name, item: '실계약', cms: cms.actual, dash: dash.actual, diff: cms.actual - dash.actual });
   });
+
+  // 대시보드에는 당일 데이터가 있는데 CMS 파일엔 없는 사람
+  const dashOnly = [];
+  dashByName.forEach((dash, name) => {
+    if (cmsByName.has(name)) return;
+    if (dash.db > 0 || dash.daily > 0 || dash.actual > 0) dashOnly.push({ name, dash });
+  });
+
+  const dateMatch = firstDate ? (firstDate === lastLatestDate) : true;
+  const total = mismatches.length + cmsOnly.length + dashOnly.length;
+
+  if (total === 0 && dateMatch) {
+    _setVerifyStatus(`일치 ✓ (${comparedCount}명)`, '#2e7d32');
+    showStatus(`CMS 검증 일치 ✓ — 비교 ${comparedCount}명 모두 일치`, 'success');
+    return;
+  }
+
+  _setVerifyStatus(`불일치 ${total}건 — 모달 확인`, '#c62828');
+  _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, comparedCount });
 }
 
 function _setVerifyStatus(text, color) {
