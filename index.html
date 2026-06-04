@@ -763,7 +763,8 @@ const KOREAN_HOLIDAYS = new Set([
   '2026-01-01',
   '2026-02-15','2026-02-16','2026-02-17','2026-02-18',
   '2026-03-01','2026-03-02',
-  '2026-05-05','2026-05-24','2026-05-25','2026-06-03','2026-06-06',
+  '2026-05-01','2026-05-05','2026-05-24','2026-05-25','2026-06-03','2026-06-06',
+  '2026-07-17',
   '2026-08-15','2026-08-17',
   '2026-09-24','2026-09-25','2026-09-26',
   '2026-10-03','2026-10-05','2026-10-09',
@@ -786,8 +787,9 @@ function isHoliday(dateStr) {
 
 // ── 임시공휴일 자동 감지 ──
 // 정부가 갑자기 임시공휴일(예: 선거일)을 지정해도 공공 휴일 API에서 자동으로 가져와 KOREAN_HOLIDAYS에 병합한다.
-// API가 공휴일로 분류하지만 실제로는 휴무가 아닌 항목은 제외한다(제헌절=비공휴일, 노동절=현행 운영상 평일 유지).
-const HOLIDAY_API_DENY = new Set(['제헌절', 'Constitution Day', '노동절', 'Labour Day']);
+// API가 공휴일로 분류하지만 실제로는 휴무로 보지 않을 항목이 있으면 여기에 추가한다(현재 없음).
+// (노동절·제헌절은 휴일로 처리하므로 제외하지 않는다.)
+const HOLIDAY_API_DENY = new Set([]);
 const HOLIDAY_CACHE_KEY = 'wmdaily_holiday_cache_v1';   // { dates:[...], fetchedAt:'YYYY-MM-DD' }
 
 // 이전에 API로 받아둔 휴일을 즉시 병합 — 네트워크 응답 전에도 정확히 동작
@@ -5661,11 +5663,11 @@ function setupAutoSync() {
     try { await refreshFromRemoteIfNeeded(); } catch(e) { console.warn('원격 갱신 오류:', e); }
     showLoading(95, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '누적 데이터 확인 중...');
     try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
-    // 임시공휴일 휴일 판정 도입(2026-06-03 지방선거 등) — 휴일값이 잘못 저장된 기존 스냅샷을 1회 강제 재생성
+    // 휴일 정의 변경(지방선거·노동절·제헌절 등) — 휴일값이 잘못 저장된 기존 스냅샷을 1회 강제 재생성
     try {
-      if (!localStorage.getItem('wmdaily_holfix_v1')) {
+      if (!localStorage.getItem('wmdaily_holfix_v2')) {
         await buildAllDateAccumulated(true);
-        localStorage.setItem('wmdaily_holfix_v1', '1');
+        localStorage.setItem('wmdaily_holfix_v2', '1');
       }
     } catch(e) { console.warn('휴일 보정 재빌드 오류:', e); }
     showLoading(100, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '완료');
