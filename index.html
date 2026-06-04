@@ -763,7 +763,7 @@ const KOREAN_HOLIDAYS = new Set([
   '2026-01-01',
   '2026-02-15','2026-02-16','2026-02-17','2026-02-18',
   '2026-03-01','2026-03-02',
-  '2026-05-05','2026-05-24','2026-05-25','2026-06-06',
+  '2026-05-05','2026-05-24','2026-05-25','2026-06-03','2026-06-06',
   '2026-08-15','2026-08-17',
   '2026-09-24','2026-09-25','2026-09-26',
   '2026-10-03','2026-10-05','2026-10-09',
@@ -782,6 +782,47 @@ function isHoliday(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   const day = d.getDay();
   return day === 0 || day === 6;
+}
+
+// ── 임시공휴일 자동 감지 ──
+// 정부가 갑자기 임시공휴일(예: 선거일)을 지정해도 공공 휴일 API에서 자동으로 가져와 KOREAN_HOLIDAYS에 병합한다.
+// API가 공휴일로 분류하지만 실제로는 휴무가 아닌 항목은 제외한다(제헌절=비공휴일, 노동절=현행 운영상 평일 유지).
+const HOLIDAY_API_DENY = new Set(['제헌절', 'Constitution Day', '노동절', 'Labour Day']);
+const HOLIDAY_CACHE_KEY = 'wmdaily_holiday_cache_v1';   // { dates:[...], fetchedAt:'YYYY-MM-DD' }
+
+// 이전에 API로 받아둔 휴일을 즉시 병합 — 네트워크 응답 전에도 정확히 동작
+try {
+  const _hc = JSON.parse(localStorage.getItem(HOLIDAY_CACHE_KEY) || 'null');
+  if (_hc && Array.isArray(_hc.dates)) _hc.dates.forEach(d => KOREAN_HOLIDAYS.add(d));
+} catch {}
+
+// 공공 휴일 API(date.nager.at — 무료·인증불필요·CORS허용)에서 올해/내년 휴일을 받아 병합.
+// 하루 1회만 호출하며, KOREAN_HOLIDAYS에 새 휴일이 추가되면 true 반환.
+async function syncHolidaysFromApi() {
+  let cache = null;
+  try { cache = JSON.parse(localStorage.getItem(HOLIDAY_CACHE_KEY) || 'null'); } catch {}
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  if (cache && cache.fetchedAt === todayStr) return false;   // 오늘 이미 조회함
+
+  const year = now.getFullYear();
+  const collected = new Set(cache?.dates || []);
+  let added = false;
+  for (const y of [year, year + 1]) {
+    try {
+      const res = await fetch(`https://date.nager.at/api/v3/PublicHolidays/${y}/KR`);
+      if (!res.ok) continue;
+      const list = await res.json();
+      for (const h of list) {
+        if (!h || !h.date) continue;
+        if (HOLIDAY_API_DENY.has(h.localName) || HOLIDAY_API_DENY.has(h.name)) continue;
+        collected.add(h.date);
+        if (!KOREAN_HOLIDAYS.has(h.date)) { KOREAN_HOLIDAYS.add(h.date); added = true; }
+      }
+    } catch (e) { console.warn('[휴일] API 조회 실패:', y, e); }
+  }
+  try { localStorage.setItem(HOLIDAY_CACHE_KEY, JSON.stringify({ dates: [...collected], fetchedAt: todayStr })); } catch {}
+  return added;
 }
 
 // ══════════════════════════════════════════════
@@ -3294,7 +3335,7 @@ async function tryBuildTab4() {
   for (const [date, dayData] of Object.entries(acc.dates)) {
     if (!filteredDateSet.has(date)) continue;
     const isLatest = (date === latestDate);
-    const isHol = dayData.isHoliday;
+    const isHol = isHoliday(date);   // 저장 당시 플래그가 아니라 현재 휴일 기준으로 판정(임시공휴일 사후 반영)
 
     for (const [name, counts] of Object.entries(dayData.persons)) {
       const s = getStats(name);
@@ -3962,7 +4003,7 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
     const dayData = acc.dates[date];
     if (!dayData) continue;
     const isLatest = (date === targetDate);
-    const isHol = dayData.isHoliday;
+    const isHol = isHoliday(date);   // 저장 당시 플래그가 아니라 현재 휴일 기준으로 판정(임시공휴일 사후 반영)
     for (const [name, counts] of Object.entries(dayData.persons)) {
       const s = getStats(name);
       s.cumDbNonIN += counts.nonIN;
@@ -5620,6 +5661,13 @@ function setupAutoSync() {
     try { await refreshFromRemoteIfNeeded(); } catch(e) { console.warn('원격 갱신 오류:', e); }
     showLoading(95, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '누적 데이터 확인 중...');
     try { await buildAllDateAccumulated(); } catch(e) { console.warn('누적 데이터 보충 오류:', e); }
+    // 임시공휴일 휴일 판정 도입(2026-06-03 지방선거 등) — 휴일값이 잘못 저장된 기존 스냅샷을 1회 강제 재생성
+    try {
+      if (!localStorage.getItem('wmdaily_holfix_v1')) {
+        await buildAllDateAccumulated(true);
+        localStorage.setItem('wmdaily_holfix_v1', '1');
+      }
+    } catch(e) { console.warn('휴일 보정 재빌드 오류:', e); }
     showLoading(100, '데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '완료');
     hideLoading();
   } else {
@@ -5634,6 +5682,17 @@ function setupAutoSync() {
       msgEl.innerHTML = '우측 상단 <strong>데이터 업로드</strong> 버튼을 눌러<br>명단, DB수, 계약수 파일을 업로드해주세요.';
     }
   }
+
+  // ── 임시공휴일 자동 감지: 백그라운드로 공휴일 API 동기화 → 새 휴일 발견 시 재빌드/재렌더 ──
+  syncHolidaysFromApi().then(async added => {
+    if (!added) return;
+    console.log('[휴일] 임시공휴일 감지 → 휴일 기준으로 재빌드');
+    try {
+      if (rosterMap && contractData) await buildAllDateAccumulated(true);
+      await tryBuildTab4();
+      showStatus('임시공휴일이 감지되어 휴일 기준으로 갱신했습니다.', 'success');
+    } catch (e) { console.warn('[휴일] 재빌드 오류:', e); }
+  }).catch(() => {});
 })();
 
 // ── Floating FAB: Group Nav + Top Button ──
