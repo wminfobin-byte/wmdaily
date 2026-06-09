@@ -889,6 +889,19 @@ function extractMonthKey(filename) {
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 }
 
+// 업로드 직전 가드: 파일명에서 뽑은 월 키가 이번 달과 다르면 확인창.
+// 연/월 오타(예: 신청자관리_2506 → 2025-06)로 다른 월에 잘못 저장돼 이중 집계되는 사고 방지.
+// 반환값 true = 진행, false = 업로드 중단. 같은 달이면 방해 없이 통과.
+function confirmMonthKey(monthKey, fileName) {
+  const now = new Date();
+  const curKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  if (monthKey === curKey) return true;
+  return confirm(
+    `⚠️ 파일명 날짜 확인\n\n"${fileName}"\n→ ${monthKey} 데이터로 인식됩니다.  (오늘: ${curKey})\n\n` +
+    `파일명의 연/월이 맞습니까?\n\n[확인] 이대로 진행   /   [취소] 업로드 중단`
+  );
+}
+
 // ══════════════════════════════════════════════
 // ── Auth & Modal ──
 // ══════════════════════════════════════════════
@@ -2700,6 +2713,7 @@ document.getElementById('fileRoster').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
   const monthKey = extractMonthKey(file.name);
+  if (!confirmMonthKey(monthKey, file.name)) { e.target.value = ''; return; }
   readExcel(file, async (data, arrayBuffer) => {
     const parsed = parseRosterRows(data, monthKey);
     rosterByMonth[monthKey] = parsed;
@@ -2761,6 +2775,7 @@ document.getElementById('fileContract').addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
   const monthKey = extractMonthKey(file.name);
+  if (!confirmMonthKey(monthKey, file.name)) { e.target.value = ''; return; }
   readExcel(file, async (data, arrayBuffer) => {
     contractByMonth[monthKey] = data;
     await saveContractToDB();
