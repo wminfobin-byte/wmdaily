@@ -3754,6 +3754,26 @@ function getActiveTabName() {
   return btn ? btn.textContent.trim() : 'dashboard';
 }
 
+// 화면 크기와 무관하게 영역 전체(가로 스크롤로 가려진 부분 포함)를 캡쳐
+function captureFull(el, opts) {
+  // 가로 스크롤로 잘리는 테이블 영역을 임시로 펼침
+  const wraps = el.querySelectorAll('.perf-table-wrap');
+  const saved = [];
+  wraps.forEach(w => { saved.push(w.style.overflowX); w.style.overflowX = 'visible'; });
+  // 콘텐츠 전체 너비 계산 (테이블 min-width 1500 등으로 뷰포트보다 넓을 수 있음)
+  let contentW = el.scrollWidth;
+  el.querySelectorAll('.perf-table').forEach(t => { contentW = Math.max(contentW, t.scrollWidth); });
+  const fullW = Math.ceil(contentW + 80); // main-content 좌우 패딩 여유분
+  return html2canvas(el, Object.assign({
+    scale: 2,
+    backgroundColor: '#f0f2f5',
+    width: fullW,
+    windowWidth: fullW,
+  }, opts || {})).finally(() => {
+    wraps.forEach((w, i) => { w.style.overflowX = saved[i]; });
+  });
+}
+
 function downloadPng(type) {
   const panel = getActiveTabPanel();
   if (!panel || !panel.innerHTML) return;
@@ -3764,7 +3784,7 @@ function downloadPng(type) {
     const wasHidden = !talkisPanel.classList.contains('active');
     if (wasHidden) talkisPanel.classList.add('active');
     requestAnimationFrame(() => {
-      html2canvas(talkisPanel, { scale: 2, backgroundColor: '#f0f2f5' }).then(canvas => {
+      captureFull(talkisPanel).then(canvas => {
         if (wasHidden) talkisPanel.classList.remove('active');
         const link = document.createElement('a');
         link.download = `톡이즈_성과_${new Date().toISOString().slice(0,10)}.png`;
@@ -3794,7 +3814,7 @@ function downloadPng(type) {
   });
 
   // info-bar도 포함
-  html2canvas(panel, { scale: 2, backgroundColor: '#f0f2f5' }).then(canvas => {
+  captureFull(panel).then(canvas => {
     const link = document.createElement('a');
     link.download = `${getActiveTabName()}_${label}_성과_${new Date().toISOString().slice(0,10)}.png`;
     link.href = canvas.toDataURL('image/png');
@@ -3823,7 +3843,7 @@ async function downloadAll() {
         if (wasHidden) talkisPanel.classList.add('active');
         // 렌더링 대기 후 캡처
         requestAnimationFrame(() => {
-          html2canvas(talkisPanel, { scale: 2, backgroundColor: '#f0f2f5' }).then(canvas => {
+          captureFull(talkisPanel).then(canvas => {
             if (wasHidden) talkisPanel.classList.remove('active');
             const link = document.createElement('a');
             link.download = `톡이즈_성과_${new Date().toISOString().slice(0,10)}.png`;
@@ -3848,7 +3868,7 @@ async function downloadAll() {
         const groupName = header.textContent.replace(/\d+명$/, '').trim();
         if (!targetGroups.includes(groupName)) { sec.style.display = 'none'; hidden.push(sec); }
       });
-      html2canvas(panel, { scale: 2, backgroundColor: '#f0f2f5' }).then(canvas => {
+      captureFull(panel).then(canvas => {
         const link = document.createElement('a');
         link.download = `${getActiveTabName()}_${label}_성과_${new Date().toISOString().slice(0,10)}.png`;
         link.href = canvas.toDataURL('image/png');
