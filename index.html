@@ -89,6 +89,16 @@
   .upload-box .btn-verify-run { position: relative; z-index: 2; flex-shrink: 0; padding: 8px 14px; border: none; border-radius: 8px; background: #1a73e8; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; transition: background 0.15s; }
   .upload-box .btn-verify-run:hover { background: #1557b0; }
   .upload-box .btn-verify-run:disabled { background: #cfd4da; cursor: default; pointer-events: none; }
+  .upload-box .raw-slot { margin-top: 5px; font-size: 11px; display: none; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .upload-box .raw-slot.show { display: flex; }
+  .upload-box .raw-slot .raw-tag { color: #9aa0a6; font-weight: 700; }
+  .upload-box .raw-slot .raw-name { color: #333; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .upload-box .raw-slot .raw-when { color: #888; }
+  .upload-box .raw-slot .raw-badge-ok { color: #2e7d32; font-weight: 700; }
+  .upload-box .raw-slot .raw-badge-new { color: #ef6c00; font-weight: 700; }
+  .upload-box .raw-slot .raw-empty { color: #bbb; }
+  .upload-box .raw-slot button { position: relative; z-index: 2; font-size: 11px; padding: 2px 8px; border: 1px solid #cbd2da; border-radius: 6px; background: #fff; cursor: pointer; white-space: nowrap; }
+  .upload-box .raw-slot button:hover { background: #eef3ff; border-color: #1a73e8; }
   .file-item { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; color: #333; }
   .file-item .file-icon { color: #34a853; font-size: 13px; }
   .file-item .file-name { font-weight: 500; word-break: break-all; }
@@ -447,6 +457,7 @@
         <div class="upload-info">
           <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>명단 파일 <span class="sub">WM_근태보고_그룹_yyyymm.xls</span><span class="status status-inline" id="rosterStatus"></span></div>
           <div class="file-list" id="rosterFileList"></div>
+          <div class="raw-slot" id="rawSlot-roster"></div>
           <div class="progress-bar" id="progressRoster"><div class="progress-fill"></div></div>
           <div class="progress-label" id="progressRosterLabel"></div>
         </div>
@@ -459,6 +470,7 @@
           <div class="label"><span class="badge badge-accumulate">누적 저장</span>DB수 파일 (일일) <span class="sub">WM_고객관리_yyyy-mm-dd.xlsx</span></div>
           <div class="status" id="dbStatus"></div>
           <div class="file-list" id="dbFileList"></div>
+          <div class="raw-slot" id="rawSlot-db"></div>
           <div class="progress-bar" id="progressDb"><div class="progress-fill"></div></div>
           <div class="progress-label" id="progressDbLabel"></div>
         </div>
@@ -470,6 +482,7 @@
         <div class="upload-info">
           <div class="label"><span class="badge badge-overwrite">덮어쓰기</span>계약수 파일 (월 누적) <span class="sub">신청자관리_yyyymm.xlsx</span><span class="status status-inline" id="contractStatus"></span></div>
           <div class="file-list" id="contractFileList"></div>
+          <div class="raw-slot" id="rawSlot-contract"></div>
           <div class="progress-bar" id="progressContract"><div class="progress-fill"></div></div>
           <div class="progress-label" id="progressContractLabel"></div>
         </div>
@@ -480,6 +493,7 @@
         <div class="upload-info">
           <div class="label">15-7 일일성과 <span class="sub">yyyy-mm-dd</span><span class="status status-inline" id="verifyStatus"></span></div>
           <div style="font-size:11px;color:#999;margin-top:2px;">화면 업로드 또는 RAW 폴더(15-7 일일성과)에 파일을 넣으면 자동 인식 · <b>[데이터 검증]</b> 버튼으로 대시보드 당일 성과와 비교</div>
+          <div class="raw-slot" id="rawSlot-verify"></div>
         </div>
         <button type="button" class="btn-verify-run" id="btnVerifyRun" onclick="runVerify()" disabled>🔍 데이터 검증</button>
         <input type="file" accept=".xls,.xlsx" id="fileVerify" onchange="handleVerifyFile(event)">
@@ -497,6 +511,8 @@
         <span id="rawDirStatus" style="font-size:12px;">미연결</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+        <button id="btnRawRefresh" onclick="refreshRawStatus()" style="display:none;" title="30초 폴링을 기다리지 않고 지금 폴더를 다시 읽어 각 박스의 RAW 현황을 갱신합니다">🔄 폴더 다시 읽기</button>
+        <button id="btnRawReadAll" onclick="forceReadAllRaw()" style="display:none;" title="폴더에 있는 최신 파일을 종류별로 즉시 IDB에 반영합니다">⤵ 전체 반영</button>
         <button id="btnRawConnect" onclick="onClickRawConnect()">RAW 폴더 연결</button>
         <button id="btnRawMigrate" onclick="migrateArchiveToRaw()" disabled title="IDB에 저장된 DB수 파일을 RAW 폴더로 일괄 백업">기존 파일 백업</button>
         <button id="btnRawDisconnect" class="danger" onclick="disconnectRawDir()" style="display:none;">연결 해제</button>
@@ -2078,7 +2094,13 @@ function updateRawDirUI() {
   const btnConnect = document.getElementById('btnRawConnect');
   const btnDisconnect = document.getElementById('btnRawDisconnect');
   const btnMigrate = document.getElementById('btnRawMigrate');
+  const btnRefresh = document.getElementById('btnRawRefresh');
+  const btnReadAll = document.getElementById('btnRawReadAll');
   if (!row) return;
+  // 박스별 RAW 슬롯/전역 버튼은 권한 부여된 연결 상태에서만 노출 (아래 granted 분기에서 다시 켬)
+  if (btnRefresh) btnRefresh.style.display = 'none';
+  if (btnReadAll) btnReadAll.style.display = 'none';
+  clearRawSlots();
   // 로그인된 사용자만 표시
   row.style.display = authPassed ? '' : 'none';
   if (!authPassed) return;
@@ -2100,12 +2122,181 @@ function updateRawDirUI() {
     if (btnConnect) { btnConnect.textContent = '폴더 변경'; btnConnect.disabled = false; }
     if (btnDisconnect) btnDisconnect.style.display = '';
     if (btnMigrate) btnMigrate.disabled = false;
+    if (btnRefresh) btnRefresh.style.display = '';
+    if (btnReadAll) btnReadAll.style.display = '';
+    refreshRawStatus();
   } else {
     statusEl.innerHTML = `<span style="color:#ef6c00;">● 권한 필요</span> <span style="color:#666;">${name}</span>`;
     if (btnConnect) { btnConnect.textContent = '권한 다시 요청'; btnConnect.disabled = false; }
     if (btnDisconnect) btnDisconnect.style.display = '';
     if (btnMigrate) btnMigrate.disabled = true;
   }
+}
+
+// ── RAW 파일 현황 (수동 확인 + 즉시 반영) ──
+const RAW_TYPE_META = [
+  { type: 'roster',   label: '명단',     icon: '📋' },
+  { type: 'db',       label: 'DB수',     icon: '📂' },
+  { type: 'contract', label: '계약수',   icon: '📑' },
+  { type: 'verify',   label: '일일성과', icon: '🔍' },
+];
+
+// 한 type의 하위 폴더에서 최신(수정시각 기준) 엑셀 파일을 찾는다. 없으면 null.
+async function scanRawLatest(type) {
+  const sub = rawState.subHandles && rawState.subHandles[type];
+  if (!sub) return null;
+  let latest = null, count = 0;
+  try {
+    for await (const [name, handle] of sub.entries()) {
+      if (!handle || handle.kind !== 'file') continue;
+      if (!/\.(xlsx|xls)$/i.test(name)) continue;
+      let file;
+      try { file = await handle.getFile(); } catch { continue; }
+      count++;
+      if (!latest || file.lastModified > latest.mtime) latest = { name, file, mtime: file.lastModified };
+    }
+  } catch (err) {
+    console.warn('[RAW status] 폴더 읽기 실패:', type, err);
+    return null;
+  }
+  if (!latest) return { name: null, mtime: 0, count: 0 };
+  return { name: latest.name, file: latest.file, mtime: latest.mtime, count };
+}
+
+// 폴링 baseline에 이미 반영된 파일인지 (size/mtime 일치)
+function _rawAlreadyReflected(type, name, file) {
+  const state = _loadPollState();
+  const prev = state[type] && state[type][name];
+  return !!(prev && file && prev.size === file.size && prev.mtime === file.lastModified);
+}
+
+// 우리가 방금 처리한 파일을 폴링 baseline에 기록 → 다음 폴링이 중복 처리하지 않게
+function _markRawReflected(type, name, file) {
+  if (!file) return;
+  const state = _loadPollState();
+  if (!state[type]) state[type] = {};
+  state[type][name] = { size: file.size, mtime: file.lastModified };
+  _savePollState(state);
+}
+
+// 각 업로드 박스 안의 RAW 슬롯을 비우고 숨김 (미연결/권한없음 상태)
+function clearRawSlots() {
+  for (const m of RAW_TYPE_META) {
+    const slot = document.getElementById('rawSlot-' + m.type);
+    if (slot) { slot.className = 'raw-slot'; slot.innerHTML = ''; }
+  }
+}
+
+function _renderRawSlot(type, info) {
+  const slot = document.getElementById('rawSlot-' + type);
+  if (!slot) return;
+  let detail;
+  if (!info || !info.name) {
+    detail = '<span class="raw-empty">RAW 폴더에 파일 없음</span>';
+  } else {
+    const when = fmtDateTime(new Date(info.mtime));
+    const reflected = _rawAlreadyReflected(type, info.name, info.file);
+    const badge = reflected
+      ? '<span class="raw-badge-ok">✅ 반영됨</span>'
+      : '<span class="raw-badge-new">🆕 미반영</span>';
+    const more = info.count > 1 ? ` <span class="raw-empty">외 ${info.count - 1}개</span>` : '';
+    detail = `<span class="raw-name" title="${info.name}">${info.name}</span>${more} · <span class="raw-when">${when}</span> · ${badge}`;
+  }
+  slot.innerHTML = `<span class="raw-tag">RAW</span>${detail}`
+    + `<button onclick="forceReadRawType('${type}')" title="이 폴더의 최신 파일을 즉시 반영">↻ 지금 반영</button>`;
+  slot.classList.add('show');
+}
+
+async function refreshRawStatus() {
+  if (!rawState.rootHandle || rawState.permission !== 'granted') {
+    clearRawSlots();
+    return;
+  }
+  // 읽는 중 표시
+  for (const m of RAW_TYPE_META) {
+    const slot = document.getElementById('rawSlot-' + m.type);
+    if (slot) { slot.classList.add('show'); slot.innerHTML = '<span class="raw-tag">RAW</span><span class="raw-empty">읽는 중…</span>'; }
+  }
+  for (const m of RAW_TYPE_META) {
+    const info = await scanRawLatest(m.type);
+    _renderRawSlot(m.type, info);
+  }
+}
+
+// 한 type의 최신 파일을 즉시 읽어 IDB에 반영 (수동 리딩). 30초 폴링을 기다리지 않음.
+async function forceReadRawType(type) {
+  if (!rawState.rootHandle || rawState.permission !== 'granted') {
+    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
+    return false;
+  }
+  const m = RAW_TYPE_META.find(x => x.type === type);
+  const label = m ? m.label : type;
+  const info = await scanRawLatest(type);
+  if (!info || !info.name) {
+    showStatus(`${label}: 폴더에 파일이 없습니다.`, 'warn');
+    return false;
+  }
+  // 이미 반영된 동일 파일(데이터 변동 없음)은 재처리하지 않고 안내만 (db 중복 재집계 에러 방지).
+  // 일일성과(verify)는 [데이터 검증] 재무장이 목적이므로 항상 다시 적재.
+  if (type !== 'verify' && _rawAlreadyReflected(type, info.name, info.file)) {
+    showStatus(`${label}: ${info.name} — 이미 반영된 최신 파일입니다.`, 'success');
+    await refreshRawStatus();
+    return true;
+  }
+
+  let buf;
+  try { buf = await info.file.arrayBuffer(); }
+  catch (err) { showStatus(`${label} 파일 읽기 실패: ${err.message}`, 'error'); return false; }
+
+  const ok = await processRawFile(type, info.name, buf);
+  // 폴링이 다시 잡지 않게 baseline 갱신
+  _markRawReflected(type, info.name, info.file);
+
+  if (type === 'verify') {
+    // verify는 IDB/GitHub 갱신 없이 [데이터 검증] 대기 상태로만 적재됨
+    showStatus(`${label}: ${info.name} 적재 완료 — [데이터 검증]을 눌러주세요.`, 'success');
+  } else if (ok) {
+    fileJustUploaded = true;
+    try { await tryBuildTab4(); } catch {}
+    if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
+      try { await syncToGitHub(true); } catch (e) { console.warn('[forceRead] GitHub sync 실패:', e); }
+    }
+    showStatus(`${label}: ${info.name} 반영 완료.`, 'success');
+  } else {
+    // db 멱등 처리 등 — 이미 반영된 경우
+    showStatus(`${label}: ${info.name} — 새로 반영할 내용이 없습니다 (이미 반영됨).`, 'success');
+  }
+  await refreshRawStatus();
+  return true;
+}
+
+// 4종류 폴더의 최신 파일을 모두 즉시 반영
+async function forceReadAllRaw() {
+  if (!rawState.rootHandle || rawState.permission !== 'granted') {
+    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
+    return;
+  }
+  let touched = 0;
+  for (const m of RAW_TYPE_META) {
+    const info = await scanRawLatest(m.type);
+    if (!info || !info.name) continue;
+    // 이미 반영된 파일은 건너뜀 (verify는 재무장 목적이라 항상 적재)
+    if (m.type !== 'verify' && _rawAlreadyReflected(m.type, info.name, info.file)) continue;
+    let buf;
+    try { buf = await info.file.arrayBuffer(); } catch { continue; }
+    const ok = await processRawFile(m.type, info.name, buf);
+    _markRawReflected(m.type, info.name, info.file);
+    if (ok) touched++;
+  }
+  if (touched > 0) {
+    fileJustUploaded = true;
+    try { await tryBuildTab4(); } catch {}
+    if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
+      try { await syncToGitHub(true); } catch (e) { console.warn('[forceReadAll] GitHub sync 실패:', e); }
+    }
+  }
+  await refreshRawStatus();
+  showStatus(touched > 0 ? `폴더의 최신 파일 ${touched}종 반영 완료.` : '새로 반영할 파일이 없습니다.', 'success');
 }
 
 // 연결 버튼: rootHandle 있으면 권한 재요청, 없으면 picker
