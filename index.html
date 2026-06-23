@@ -2236,19 +2236,18 @@ async function forceReadRawType(type) {
     showStatus(`${label}: 폴더에 파일이 없습니다.`, 'warn');
     return false;
   }
-  // 이미 반영된 동일 파일(데이터 변동 없음)은 재처리하지 않고 안내만 (db 중복 재집계 에러 방지).
-  // 일일성과(verify)는 [데이터 검증] 재무장이 목적이므로 항상 다시 적재.
-  if (type !== 'verify' && _rawAlreadyReflected(type, info.name, info.file)) {
-    showStatus(`${label}: ${info.name} — 이미 반영된 최신 파일입니다.`, 'success');
-    await refreshRawStatus();
-    return true;
-  }
+  // 사용자가 직접 [지금 반영]을 눌렀으므로 baseline("봤음" 기록)과 무관하게 항상 실제 반영한다.
+  // 폴링 isInitial 분기가 처리 없이 baseline만 등록한 파일은 _rawAlreadyReflected가 true여도
+  // IDB엔 안 들어가 있을 수 있어, baseline skip을 믿으면 영영 반영이 안 됨.
+  // accumulateDbData(키 기준 중복 제거)·명단/계약(월 단위 덮어쓰기) 모두 멱등이라 재처리해도 안전.
 
   let buf;
   try { buf = await info.file.arrayBuffer(); }
   catch (err) { showStatus(`${label} 파일 읽기 실패: ${err.message}`, 'error'); return false; }
 
-  const ok = await processRawFile(type, info.name, buf);
+  let ok;
+  try { ok = await processRawFile(type, info.name, buf); }
+  catch (err) { showStatus(`${label} 반영 실패: ${err.message}`, 'error'); console.warn('[forceRead] 처리 실패:', type, err); return false; }
   // 폴링이 다시 잡지 않게 baseline 갱신
   _markRawReflected(type, info.name, info.file);
 
@@ -2276,27 +2275,38 @@ async function forceReadAllRaw() {
     showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
     return;
   }
+  // 사용자가 직접 [전체 반영]을 눌렀으므로 baseline skip 없이 종류별 최신 파일을 모두 실제 반영한다.
+  // (폴링 isInitial이 처리 없이 baseline만 등록한 파일도 여기서 확실히 IDB에 반영됨.)
+  // 한 종류가 실패해도 나머지는 계속 처리하도록 each type을 try/catch로 격리.
   let touched = 0;
+  const failed = [];
   for (const m of RAW_TYPE_META) {
-    const info = await scanRawLatest(m.type);
+    let info;
+    try { info = await scanRawLatest(m.type); }
+    catch (err) { failed.push(`${m.label}(스캔실패)`); console.warn('[forceReadAll] scan 실패:', m.type, err); continue; }
     if (!info || !info.name) continue;
-    // 이미 반영된 파일은 건너뜀 (verify는 재무장 목적이라 항상 적재)
-    if (m.type !== 'verify' && _rawAlreadyReflected(m.type, info.name, info.file)) continue;
     let buf;
-    try { buf = await info.file.arrayBuffer(); } catch { continue; }
-    const ok = await processRawFile(m.type, info.name, buf);
+    try { buf = await info.file.arrayBuffer(); }
+    catch (err) { failed.push(`${m.label}(읽기실패)`); console.warn('[forceReadAll] 파일 읽기 실패:', m.type, err); continue; }
+    let ok = false;
+    try { ok = await processRawFile(m.type, info.name, buf); }
+    catch (err) { failed.push(`${m.label}(처리실패)`); console.warn('[forceReadAll] 처리 실패:', m.type, err); continue; }
     _markRawReflected(m.type, info.name, info.file);
     if (ok) touched++;
   }
   if (touched > 0) {
     fileJustUploaded = true;
-    try { await tryBuildTab4(); } catch {}
+    try { await tryBuildTab4(); } catch (e) { console.warn('[forceReadAll] tryBuildTab4 실패:', e); }
     if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
       try { await syncToGitHub(true); } catch (e) { console.warn('[forceReadAll] GitHub sync 실패:', e); }
     }
   }
   await refreshRawStatus();
-  showStatus(touched > 0 ? `폴더의 최신 파일 ${touched}종 반영 완료.` : '새로 반영할 파일이 없습니다.', 'success');
+  if (failed.length) {
+    showStatus(`${touched > 0 ? `${touched}종 반영, ` : ''}일부 실패: ${failed.join(', ')}`, touched > 0 ? 'warn' : 'error');
+  } else {
+    showStatus(touched > 0 ? `폴더의 최신 파일 ${touched}종 반영 완료.` : '폴더에 반영할 파일이 없습니다.', 'success');
+  }
 }
 
 // 연결 버튼: rootHandle 있으면 권한 재요청, 없으면 picker
