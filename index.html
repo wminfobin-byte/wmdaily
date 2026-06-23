@@ -1843,13 +1843,15 @@ async function writeFileToRaw(type, fileName, arrayBuffer) {
     const writable = await fileHandle.createWritable();
     await writable.write(arrayBuffer);
     await writable.close();
-    // 폴링 baseline 갱신: 우리가 방금 쓴 파일은 다음 폴링이 다시 처리하지 않게
+    // 감지 기록 갱신: 우리가 방금 쓴 파일은 다음 폴링이 다시 처리하지 않게.
+    // 업로드 핸들러가 이미 IDB에 반영(처리)한 파일이므로 반영 기록에도 남겨 박스 뱃지를 "✅ 반영됨"으로.
     try {
       const file = await fileHandle.getFile();
       const state = _loadPollState();
       state[type] = state[type] || {};
       state[type][fileName] = { size: file.size, mtime: file.lastModified };
       _savePollState(state);
+      _markRawReflected(type, fileName, file);
     } catch {}
     return { ok: true };
   } catch (err) {
@@ -1904,6 +1906,20 @@ function _loadPollState() {
 }
 function _savePollState(s) {
   try { localStorage.setItem(RAW_POLL_KEY, JSON.stringify(s)); } catch {}
+}
+
+// ── 감지(detected) / 반영(reflected) 분리 ──
+// 감지 기록(RAW_POLL_KEY): 폴링이 폴더에서 "읽어 인식"한 파일 상태 — 변경 감지용.
+// 반영 기록(RAW_REFLECTED_KEY): 실제로 IDB에 "반영(처리)"된 파일 상태 — 박스 뱃지가 이걸 본다.
+// 분리 이유: 폴링 첫 회차(isInitial)는 파일을 감지만 하고 처리는 안 하므로,
+//   감지 기록을 반영으로 오인하면 미반영 파일이 "✅ 반영됨"으로 잘못 표시됨.
+const RAW_REFLECTED_KEY = 'wmdaily_rawReflectedState';
+function _loadReflectedState() {
+  try { return JSON.parse(localStorage.getItem(RAW_REFLECTED_KEY) || '{}'); }
+  catch { return {}; }
+}
+function _saveReflectedState(s) {
+  try { localStorage.setItem(RAW_REFLECTED_KEY, JSON.stringify(s)); } catch {}
 }
 
 // arrayBuffer를 받아 type에 맞게 IDB에 반영. 업로드 핸들러의 핵심 로직과 동일.
@@ -1985,13 +2001,16 @@ async function pollRawFolder() {
         console.warn('[RAW poll] 폴더 순회 실패:', type, err);
         continue;
       }
-      // 첫 폴링이고 baseline 자체가 비어있으면 처리하지 않고 baseline만 등록
+      // 첫 폴링이고 감지 기록 자체가 비어있으면 처리하지 않고 감지 기록만 등록.
+      // (이 파일들은 반영 기록에 안 남으므로 박스 뱃지는 "🆕 미반영"으로 떠 사용자가 반영을 누르게 됨)
       const isInitial = Object.keys(lastSeen).length === 0 && Object.keys(newSeen).length > 0;
       if (!isInitial) {
         for (const item of newOrChanged) {
           try {
             const buf = await item.file.arrayBuffer();
             const ok = await processRawFile(type, item.name, buf);
+            // 실제 처리한 파일만 반영 기록에 남긴다 (감지 기록과 분리)
+            _markRawReflected(type, item.name, item.file);
             if (ok) { dirty = true; pickedCount++; }
           } catch (err) {
             console.warn('[RAW poll] 파일 처리 실패:', item.name, err);
@@ -2163,20 +2182,21 @@ async function scanRawLatest(type) {
   return { name: latest.name, file: latest.file, mtime: latest.mtime, count };
 }
 
-// 폴링 baseline에 이미 반영된 파일인지 (size/mtime 일치)
+// 박스 뱃지용: 이 파일이 실제로 IDB에 반영(처리)된 적 있는지 (size/mtime 일치).
+// 감지 기록이 아니라 반영 기록을 본다 — 감지만 되고 미반영인 파일은 false.
 function _rawAlreadyReflected(type, name, file) {
-  const state = _loadPollState();
+  const state = _loadReflectedState();
   const prev = state[type] && state[type][name];
   return !!(prev && file && prev.size === file.size && prev.mtime === file.lastModified);
 }
 
-// 우리가 방금 처리한 파일을 폴링 baseline에 기록 → 다음 폴링이 중복 처리하지 않게
+// 방금 IDB에 반영(처리)한 파일을 반영 기록에 남김 → 박스 뱃지가 "✅ 반영됨"으로 표시
 function _markRawReflected(type, name, file) {
   if (!file) return;
-  const state = _loadPollState();
+  const state = _loadReflectedState();
   if (!state[type]) state[type] = {};
   state[type][name] = { size: file.size, mtime: file.lastModified };
-  _savePollState(state);
+  _saveReflectedState(state);
 }
 
 // 각 업로드 박스 안의 RAW 슬롯을 비우고 숨김 (미연결/권한없음 상태)
@@ -2236,9 +2256,7 @@ async function forceReadRawType(type) {
     showStatus(`${label}: 폴더에 파일이 없습니다.`, 'warn');
     return false;
   }
-  // 사용자가 직접 [지금 반영]을 눌렀으므로 baseline("봤음" 기록)과 무관하게 항상 실제 반영한다.
-  // 폴링 isInitial 분기가 처리 없이 baseline만 등록한 파일은 _rawAlreadyReflected가 true여도
-  // IDB엔 안 들어가 있을 수 있어, baseline skip을 믿으면 영영 반영이 안 됨.
+  // 사용자가 직접 [지금 반영]을 눌렀으므로 감지/반영 기록과 무관하게 항상 실제 반영한다.
   // accumulateDbData(키 기준 중복 제거)·명단/계약(월 단위 덮어쓰기) 모두 멱등이라 재처리해도 안전.
 
   let buf;
@@ -2275,8 +2293,8 @@ async function forceReadAllRaw() {
     showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
     return;
   }
-  // 사용자가 직접 [전체 반영]을 눌렀으므로 baseline skip 없이 종류별 최신 파일을 모두 실제 반영한다.
-  // (폴링 isInitial이 처리 없이 baseline만 등록한 파일도 여기서 확실히 IDB에 반영됨.)
+  // 사용자가 직접 [전체 반영]을 눌렀으므로 감지/반영 기록과 무관하게 종류별 최신 파일을 모두 실제 반영한다.
+  // (폴링 isInitial이 감지만 하고 미처리로 남긴 파일도 여기서 확실히 IDB에 반영됨.)
   // 한 종류가 실패해도 나머지는 계속 처리하도록 each type을 try/catch로 격리.
   let touched = 0;
   const failed = [];
