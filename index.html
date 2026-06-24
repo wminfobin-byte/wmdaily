@@ -3716,36 +3716,61 @@ async function tryBuildTab4() {
   });
 
   // ── KPI 1행: 조회 기간 기준 (필터 적용) ──
-  // DB수·실계약수 = 날짜별 합계(최근영업일 블록 todayDb/todayActualContract)의 조회기간 누적 = cumDbAll/cumContractAll (IN 포함, 취소만 제외)
-  function calcFilteredKpi(gMap) {
-    let db = 0, actual = 0;
-    for (const [, persons] of gMap) {
-      for (const p of persons) { db += p.cumDbAll; actual += p.cumContractAll; }
-    }
-    return { db, actual };
+  // DB수 = 조회기간 분배 DB 누적 (cumDbAll, 취소 개념 없음 — 날짜별 당일 DB 합계와 동일)
+  function calcFilteredDb(gMap) {
+    let db = 0;
+    for (const [, persons] of gMap) { for (const p of persons) db += p.cumDbAll; }
+    return db;
   }
-  // 일계약수 = 조회기간 내 당일계약(분배일==신청일) 합계, 취소만 제외 (IN·휴일 포함 — 표의 일계약 컬럼과 동일 정의)
+  // 실계약수·일계약수 = 날짜별 '당일' 블록의 박제 합계와 동일 기준.
+  //   ★취소 판정: 반품일 <= 신청일(=그날 마감 시점)일 때만 제외. 그 이후 발생한 반품은 포함(당일 블록 박제와 동일).
+  //   담당자 정규화·visible 판정은 라이브 빌드(표)와 동일 규칙 사용.
+  let filtActualMain = 0, filtActualTalkis = 0;
   let filtDailyMain = 0, filtDailyTalkis = 0;
-  for (const [key, meta] of Object.entries(acc.keyMeta)) {
-    if (meta.el !== 1) continue;
-    if (!isPersonVisible(meta.p)) continue;
-    const ctRow = contractByKey.get(key);
-    if (!ctRow) continue;
-    // 취소 제외
-    const rv = ctRow[CT_COL.returnDate];
-    if (rv != null && rv !== '' && String(rv).trim() !== '') continue;
-    const appDate = datePart(ctRow[CT_COL.applicationDate]);
-    if (!appDate) continue;
-    if (dateStart && appDate < dateStart) continue;
-    if (dateEnd && appDate > dateEnd) continue;
-    // 당일계약: 분배일 == 신청일
-    if (appDate !== meta.d) continue;
-    const pi = activeRoster.get(meta.p);
-    if (pi && talkisGroups.includes(pi.group)) filtDailyTalkis++;
-    else filtDailyMain++;
-  }
-  const filtMain = calcFilteredKpi(groupedMain); filtMain.daily = filtDailyMain;
-  const filtTalkis = calcFilteredKpi(groupedTalkis); filtTalkis.daily = filtDailyTalkis;
+  contractData.forEach(ctRow => {
+    const manager = String(ctRow[CT_COL.manager] || '').trim();
+    if (!manager) return;
+    const appDateStr = datePart(ctRow[CT_COL.applicationDate]);
+    if (!appDateStr) return;
+    if (dateStart && appDateStr < dateStart) return;
+    if (dateEnd && appDateStr > dateEnd) return;
+    // 박제 취소: 반품일이 신청일 이하면 그날 마감 시점에 이미 취소 → 제외 (이후 반품은 포함)
+    const returnDateStr = datePart(ctRow[CT_COL.returnDate]);
+    if (returnDateStr && returnDateStr <= appDateStr) return;
+    const custKey = String(ctRow[CT_COL.customerKey] || '').trim();
+    const meta = custKey ? acc.keyMeta[custKey] : null;
+    // 담당자 이름 정규화 (라이브 빌드와 동일)
+    let canonicalName;
+    if (manager.startsWith('(종료)')) {
+      if (meta && meta.p && activeRoster.has(meta.p)) canonicalName = meta.p;
+      else {
+        const stripped = manager.replace(/^\(종료\)/, '').trim();
+        if (activeRoster.has(stripped)) canonicalName = stripped;
+        else if (activeRosterByStripped.has(stripped)) canonicalName = activeRosterByStripped.get(stripped);
+        else canonicalName = manager;
+      }
+    } else if (activeRosterByStripped.has(manager)) {
+      canonicalName = activeRosterByStripped.get(manager);
+    } else {
+      canonicalName = manager;
+    }
+    if (!isPersonVisible(canonicalName)) return;
+    const pi = activeRoster.get(canonicalName);
+    const isTalkis = !!(pi && talkisGroups.includes(pi.group));
+    // 실계약 (IN 포함)
+    if (isTalkis) filtActualTalkis++; else filtActualMain++;
+    // 일계약 = 당일계약 (분배일 == 신청일)
+    let is일계약;
+    if (meta) {
+      is일계약 = meta.el === 1 && (appDateStr === meta.d);
+    } else {
+      const dbDateStr = datePart(ctRow[CT_COL.dbDate]);
+      is일계약 = !!(dbDateStr && appDateStr && dbDateStr === appDateStr);
+    }
+    if (is일계약) { if (isTalkis) filtDailyTalkis++; else filtDailyMain++; }
+  });
+  const filtMain = { db: calcFilteredDb(groupedMain), actual: filtActualMain, daily: filtDailyMain };
+  const filtTalkis = { db: calcFilteredDb(groupedTalkis), actual: filtActualTalkis, daily: filtDailyTalkis };
 
   // ── KPI 2행: 전영업일 데이터 (날짜 필터 무관) ──
   const kpiPersonDb = new Map();
