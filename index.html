@@ -246,6 +246,7 @@
   .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; }
   .kpi-card { flex: 1; min-width: 130px; max-width: 200px; background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; text-align: center; }
   .kpi-card .kpi-label { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .kpi-card .kpi-label[title] { cursor: help; text-decoration: underline dotted rgba(0,0,0,0.25); text-underline-offset: 3px; }
   .kpi-card .kpi-value { font-size: 22px; font-weight: 800; }
   .kpi-card.kpi-db .kpi-label { color: #2e7d32; }
   .kpi-card.kpi-db .kpi-value { color: #2e7d32; }
@@ -683,17 +684,17 @@
       </div>
       <div class="kpi-row-label" id="kpiFilteredLabel">조회 기간</div>
       <div class="kpi-row">
-        <div class="kpi-card kpi-db"><div class="kpi-label">📋 DB수</div><div class="kpi-value" id="kpiFDb">0</div></div>
-        <div class="kpi-card kpi-daily"><div class="kpi-label">⚡ 일계약수</div><div class="kpi-value" id="kpiFDaily">0</div></div>
-        <div class="kpi-card kpi-actual"><div class="kpi-label">✅ 실계약수</div><div class="kpi-value" id="kpiFActual">0</div></div>
-        <div class="kpi-card kpi-rate"><div class="kpi-label">📈 실계약률</div><div class="kpi-value" id="kpiFRate">-</div></div>
+        <div class="kpi-card kpi-db"><div class="kpi-label" title="분배일 기준 분배된 DB 수 (IN 포함)&#10;제외: 고객키 중복 · OB명 빈값 · 군자/관리자 · 분배일 빈값 · 재콜">📋 DB수</div><div class="kpi-value" id="kpiFDb">0</div></div>
+        <div class="kpi-card kpi-daily"><div class="kpi-label" title="분배 당일 계약(분배일=신청일) 건수 (IN 포함)&#10;제외: 담당자 빈값 · 그날 마감 시점 반품(반품일≤신청일)">⚡ 일계약수</div><div class="kpi-value" id="kpiFDaily">0</div></div>
+        <div class="kpi-card kpi-actual"><div class="kpi-label" title="신청일 기준 체결 계약 건수 (IN 포함)&#10;제외: 담당자 빈값 · 그날 마감 시점 반품(반품일≤신청일)&#10;※ 이후 발생한 반품은 포함(당일 블록 박제 기준)">✅ 실계약수</div><div class="kpi-value" id="kpiFActual">0</div></div>
+        <div class="kpi-card kpi-rate"><div class="kpi-label" title="실계약수 ÷ DB수 (조회기간 총합 기준 재계산)">📈 실계약률</div><div class="kpi-value" id="kpiFRate">-</div></div>
       </div>
       <div class="kpi-row-label" id="kpiGlobalLabel">최근 영업일</div>
       <div class="kpi-row">
-        <div class="kpi-card kpi-db"><div class="kpi-label">📋 DB수</div><div class="kpi-value" id="kpiGDb">0</div></div>
-        <div class="kpi-card kpi-daily"><div class="kpi-label">⚡ 일계약수</div><div class="kpi-value" id="kpiGDaily">0</div></div>
-        <div class="kpi-card kpi-actual"><div class="kpi-label">✅ 실계약수</div><div class="kpi-value" id="kpiGActual">0</div></div>
-        <div class="kpi-card kpi-rate"><div class="kpi-label">📈 실계약률</div><div class="kpi-value" id="kpiGRate">-</div></div>
+        <div class="kpi-card kpi-db"><div class="kpi-label" title="분배일 기준 분배된 DB 수 (IN 포함)&#10;제외: 고객키 중복 · OB명 빈값 · 군자/관리자 · 분배일 빈값 · 재콜">📋 DB수</div><div class="kpi-value" id="kpiGDb">0</div></div>
+        <div class="kpi-card kpi-daily"><div class="kpi-label" title="분배 당일 계약(분배일=신청일) 건수 (IN 포함)&#10;제외: 담당자 빈값 · 그날 마감 시점 반품(반품일≤신청일)">⚡ 일계약수</div><div class="kpi-value" id="kpiGDaily">0</div></div>
+        <div class="kpi-card kpi-actual"><div class="kpi-label" title="신청일 기준 체결 계약 건수 (IN 포함)&#10;제외: 담당자 빈값 · 그날 마감 시점 반품(반품일≤신청일)&#10;※ 이후 발생한 반품은 포함(당일 블록 박제 기준)">✅ 실계약수</div><div class="kpi-value" id="kpiGActual">0</div></div>
+        <div class="kpi-card kpi-rate"><div class="kpi-label" title="실계약수 ÷ DB수 (조회기간 총합 기준 재계산)">📈 실계약률</div><div class="kpi-value" id="kpiGRate">-</div></div>
       </div>
     </div>
   </div>
