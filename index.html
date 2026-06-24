@@ -3716,6 +3716,7 @@ async function tryBuildTab4() {
   });
 
   // ── KPI 1행: 조회 기간 기준 (필터 적용) ──
+  // DB수·실계약수 = 날짜별 합계(최근영업일 블록 todayDb/todayActualContract)의 조회기간 누적 = cumDbAll/cumContractAll (IN 포함, 취소만 제외)
   function calcFilteredKpi(gMap) {
     let db = 0, actual = 0;
     for (const [, persons] of gMap) {
@@ -3723,19 +3724,22 @@ async function tryBuildTab4() {
     }
     return { db, actual };
   }
+  // 일계약수 = 조회기간 내 당일계약(분배일==신청일) 합계, 취소만 제외 (IN·휴일 포함 — 표의 일계약 컬럼과 동일 정의)
   let filtDailyMain = 0, filtDailyTalkis = 0;
   for (const [key, meta] of Object.entries(acc.keyMeta)) {
     if (meta.el !== 1) continue;
     if (!isPersonVisible(meta.p)) continue;
     const ctRow = contractByKey.get(key);
     if (!ctRow) continue;
-    const appDate = datePart(ctRow[CT_COL.applicationDate]);
-    if (appDate) {
-      if (dateStart && appDate < dateStart) continue;
-      if (dateEnd && appDate > dateEnd) continue;
-    }
+    // 취소 제외
     const rv = ctRow[CT_COL.returnDate];
     if (rv != null && rv !== '' && String(rv).trim() !== '') continue;
+    const appDate = datePart(ctRow[CT_COL.applicationDate]);
+    if (!appDate) continue;
+    if (dateStart && appDate < dateStart) continue;
+    if (dateEnd && appDate > dateEnd) continue;
+    // 당일계약: 분배일 == 신청일
+    if (appDate !== meta.d) continue;
     const pi = activeRoster.get(meta.p);
     if (pi && talkisGroups.includes(pi.group)) filtDailyTalkis++;
     else filtDailyMain++;
