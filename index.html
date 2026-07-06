@@ -1861,6 +1861,23 @@ async function writeFileToRaw(type, fileName, arrayBuffer) {
   }
 }
 
+// 하위 폴더까지 재귀적으로 엑셀 파일(.xlsx/.xls)만 순회한다.
+// 예: "1-2 고객관리 DB수/2026-01/..." 처럼 월별 폴더로 정리해도 sync가 인식하도록 함.
+// depth 가드로 과도한 깊이(잘못된 폴더 연결 등)를 방어한다.
+async function* _walkRawExcel(dir, depth = 0) {
+  if (!dir || depth > 5) return;
+  for await (const [name, handle] of dir.entries()) {
+    if (!handle) continue;
+    if (handle.kind === 'directory') {
+      yield* _walkRawExcel(handle, depth + 1);
+      continue;
+    }
+    if (handle.kind !== 'file') continue;
+    if (!/\.(xlsx|xls)$/i.test(name)) continue;
+    yield [name, handle];
+  }
+}
+
 // RAW의 15-7 일일성과 폴더에서 가장 최근(수정시각 기준) 파일을 읽어 pendingVerify에 적재.
 // 폴더 연결/복원 시 호출 — 폴링 전부터 폴더에 있던 파일도 [데이터 검증]에 바로 쓸 수 있게 함.
 async function loadLatestVerifyFromRaw() {
@@ -1868,9 +1885,7 @@ async function loadLatestVerifyFromRaw() {
   if (!sub) return;
   let latest = null;
   try {
-    for await (const [name, handle] of sub.entries()) {
-      if (!handle || handle.kind !== 'file') continue;
-      if (!/\.(xlsx|xls)$/i.test(name)) continue;
+    for await (const [name, handle] of _walkRawExcel(sub)) {
       let file;
       try { file = await handle.getFile(); } catch { continue; }
       if (!latest || file.lastModified > latest.mtime) latest = { name, file, mtime: file.lastModified };
@@ -1986,9 +2001,7 @@ async function pollRawFolder() {
       const newSeen = {};
       const newOrChanged = [];
       try {
-        for await (const [name, handle] of sub.entries()) {
-          if (!handle || handle.kind !== 'file') continue;
-          if (!/\.(xlsx|xls)$/i.test(name)) continue;
+        for await (const [name, handle] of _walkRawExcel(sub)) {
           let file;
           try { file = await handle.getFile(); } catch { continue; }
           const meta = { size: file.size, mtime: file.lastModified };
@@ -2167,9 +2180,7 @@ async function scanRawLatest(type) {
   if (!sub) return null;
   let latest = null, count = 0;
   try {
-    for await (const [name, handle] of sub.entries()) {
-      if (!handle || handle.kind !== 'file') continue;
-      if (!/\.(xlsx|xls)$/i.test(name)) continue;
+    for await (const [name, handle] of _walkRawExcel(sub)) {
       let file;
       try { file = await handle.getFile(); } catch { continue; }
       count++;
