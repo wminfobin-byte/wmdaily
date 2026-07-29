@@ -513,7 +513,7 @@
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
         <button id="btnRawRefresh" onclick="refreshRawStatus()" style="display:none;" title="30초 폴링을 기다리지 않고 지금 폴더를 다시 읽어 각 박스의 RAW 현황을 갱신합니다">🔄 폴더 다시 읽기</button>
-        <button id="btnRawReadAll" onclick="forceReadAllRaw()" style="display:none;" title="폴더에 있는 최신 파일을 종류별로 즉시 IDB에 반영합니다">⤵ 전체 반영</button>
+        <button id="btnRawReadAll" onclick="forceReadAllRaw()" style="display:none;" title="폴더의 미반영 파일 전부 + 종류별 최신 파일을 강제로 다시 읽어 IDB에 반영합니다">⤵ 전체 반영</button>
         <button id="btnRawConnect" onclick="onClickRawConnect()">RAW 폴더 연결</button>
         <button id="btnRawMigrate" onclick="migrateArchiveToRaw()" disabled title="IDB에 저장된 DB수 파일을 RAW 폴더로 일괄 백업">기존 파일 백업</button>
         <button id="btnRawDisconnect" class="danger" onclick="disconnectRawDir()" style="display:none;">연결 해제</button>
@@ -1340,7 +1340,8 @@ async function loadAccumulated() {
   }
 }
 
-async function accumulateDbData(rows) {
+async function accumulateDbData(rows, opts) {
+  const silent = !!(opts && opts.silent);
   const seen = new Set();
   const uniqueRows = rows.filter(row => {
     const key = String(row[DB_COL.customerKey] || '').trim();
@@ -1368,7 +1369,7 @@ async function accumulateDbData(rows) {
 
   const dupCount = rows.length - uniqueRows.length;
   const overlapCount = uniqueRows.length - newRows.length;
-  if (dupCount > 0 || overlapCount > 0) {
+  if ((dupCount > 0 || overlapCount > 0) && !silent) {
     showStatus(`중복 제거: 파일 내 ${dupCount}건, 기존 누적 데이터와 ${overlapCount}건`, 'warn');
   }
 
@@ -1409,7 +1410,9 @@ async function accumulateDbData(rows) {
 
   const dates = Object.keys(dateMap).sort();
   if (dates.length === 0) {
-    showStatus('DB수 파일에서 분배일을 읽을 수 없습니다.', 'error');
+    // 신규 키가 하나도 없으면 이미 반영된 파일 — 오류가 아니라 "새로 반영할 내용 없음"
+    if (newRows.length === 0) return null;
+    if (!silent) showStatus('DB수 파일에서 분배일을 읽을 수 없습니다.', 'error');
     return null;
   }
 
@@ -1874,6 +1877,9 @@ async function* _walkRawExcel(dir, depth = 0) {
     }
     if (handle.kind !== 'file') continue;
     if (!/\.(xlsx|xls)$/i.test(name)) continue;
+    // 엑셀 임시/잠금 파일(~$xxx.xlsx)과 숨김 파일 제외 —
+    // 누군가 파일을 열어두면 이게 "가장 최근 수정" 파일로 잡혀 반영이 통째로 실패한다.
+    if (name.startsWith('~$') || name.startsWith('.')) continue;
     yield [name, handle];
   }
 }
@@ -1939,7 +1945,8 @@ function _saveReflectedState(s) {
 }
 
 // arrayBuffer를 받아 type에 맞게 IDB에 반영. 업로드 핸들러의 핵심 로직과 동일.
-async function processRawFile(type, name, arrayBuffer) {
+async function processRawFile(type, name, arrayBuffer, opts) {
+  const silent = !!(opts && opts.silent);
   let wb, ws, raw, data;
   try {
     wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
@@ -1960,13 +1967,14 @@ async function processRawFile(type, name, arrayBuffer) {
     rosterMap = rosterByMonth[latestMonth];
     return true;
   } else if (type === 'db') {
-    const result = await accumulateDbData(data);
+    const result = await accumulateDbData(data, { silent });
     if (result) {
       todayDbDate = result.latestDate;
       await saveFileMeta('db', name, data.length, result.addedKeys, result.dateContributions);
     }
     await saveFileArchive(name, arrayBuffer);
-    return true;
+    // 새로 누적된 데이터가 있을 때만 true — 이미 반영된 파일을 "반영 완료"로 오인하지 않게 한다.
+    return !!result;
   } else if (type === 'contract') {
     const monthKey = extractMonthKey(name);
     contractByMonth[monthKey] = data;
@@ -1993,6 +2001,7 @@ async function pollRawFolder() {
   rawPollInflight = true;
   try {
     const state = _loadPollState();
+    const prevLatest = globalLatestDate;
     let dirty = false;
     let pickedCount = 0;
     for (const [type, sub] of Object.entries(rawState.subHandles)) {
@@ -2039,6 +2048,7 @@ async function pollRawFolder() {
       // 화면의 "최종 업데이트" 라벨도 갱신 (tryBuildTab4 안에서 saveLastUpdateTime 호출됨)
       fileJustUploaded = true;
       try { await tryBuildTab4(); } catch {}
+      await _ensureFilterCoversLatest(prevLatest);
       // GitHub 갱신 (관리자만 가능 — 토큰 있으면)
       if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
         try { await syncToGitHub(true); } catch (e) { console.warn('[RAW poll] GitHub sync 실패:', e); }
@@ -2174,24 +2184,32 @@ const RAW_TYPE_META = [
   { type: 'verify',   label: '일일성과', icon: '🔍' },
 ];
 
-// 한 type의 하위 폴더에서 최신(수정시각 기준) 엑셀 파일을 찾는다. 없으면 null.
-async function scanRawLatest(type) {
+// 한 type의 하위 폴더에 있는 엑셀 파일 전부를 수정시각 오름차순으로 반환. 실패 시 null.
+async function scanRawFiles(type) {
   const sub = rawState.subHandles && rawState.subHandles[type];
   if (!sub) return null;
-  let latest = null, count = 0;
+  const out = [];
   try {
     for await (const [name, handle] of _walkRawExcel(sub)) {
       let file;
       try { file = await handle.getFile(); } catch { continue; }
-      count++;
-      if (!latest || file.lastModified > latest.mtime) latest = { name, file, mtime: file.lastModified };
+      out.push({ name, file, mtime: file.lastModified });
     }
   } catch (err) {
     console.warn('[RAW status] 폴더 읽기 실패:', type, err);
     return null;
   }
-  if (!latest) return { name: null, mtime: 0, count: 0 };
-  return { name: latest.name, file: latest.file, mtime: latest.mtime, count };
+  out.sort((a, b) => a.mtime - b.mtime);
+  return out;
+}
+
+// 한 type의 하위 폴더에서 최신(수정시각 기준) 엑셀 파일을 찾는다. 없으면 null.
+async function scanRawLatest(type) {
+  const files = await scanRawFiles(type);
+  if (!files) return null;
+  if (files.length === 0) return { name: null, mtime: 0, count: 0 };
+  const latest = files[files.length - 1];
+  return { name: latest.name, file: latest.file, mtime: latest.mtime, count: files.length };
 }
 
 // 박스 뱃지용: 이 파일이 실제로 IDB에 반영(처리)된 적 있는지 (size/mtime 일치).
@@ -2275,6 +2293,7 @@ async function forceReadRawType(type) {
   try { buf = await info.file.arrayBuffer(); }
   catch (err) { showStatus(`${label} 파일 읽기 실패: ${err.message}`, 'error'); return false; }
 
+  const prevLatest = globalLatestDate;
   let ok;
   try { ok = await processRawFile(type, info.name, buf); }
   catch (err) { showStatus(`${label} 반영 실패: ${err.message}`, 'error'); console.warn('[forceRead] 처리 실패:', type, err); return false; }
@@ -2287,10 +2306,11 @@ async function forceReadRawType(type) {
   } else if (ok) {
     fileJustUploaded = true;
     try { await tryBuildTab4(); } catch {}
+    await _ensureFilterCoversLatest(prevLatest);
     if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
       try { await syncToGitHub(true); } catch (e) { console.warn('[forceRead] GitHub sync 실패:', e); }
     }
-    showStatus(`${label}: ${info.name} 반영 완료.`, 'success');
+    showStatus(`${label}: ${info.name} 반영 완료.${globalLatestDate ? ` (대시보드 당일: ${globalLatestDate})` : ''}`, 'success');
   } else {
     // db 멱등 처리 등 — 이미 반영된 경우
     showStatus(`${label}: ${info.name} — 새로 반영할 내용이 없습니다 (이미 반영됨).`, 'success');
@@ -2299,44 +2319,113 @@ async function forceReadRawType(type) {
   return true;
 }
 
-// 4종류 폴더의 최신 파일을 모두 즉시 반영
+// 폴더 안의 "미반영 파일 전부 + 종류별 최신 파일(강제)"을 즉시 반영.
+// 예전에는 종류당 최신 1개만 처리해서, 최신 수정시각이 아닌 오늘 파일이 폴더에 있어도
+// 통째로 건너뛰고 "반영 완료"만 뜨는 문제가 있었다.
 async function forceReadAllRaw() {
   if (!rawState.rootHandle || rawState.permission !== 'granted') {
     showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
     return;
   }
-  // 사용자가 직접 [전체 반영]을 눌렀으므로 감지/반영 기록과 무관하게 종류별 최신 파일을 모두 실제 반영한다.
-  // (폴링 isInitial이 감지만 하고 미처리로 남긴 파일도 여기서 확실히 IDB에 반영됨.)
-  // 한 종류가 실패해도 나머지는 계속 처리하도록 each type을 try/catch로 격리.
-  let touched = 0;
+  const statusEl = document.getElementById('rawDirStatus');
+  const btn = document.getElementById('btnRawReadAll');
+  if (btn) btn.disabled = true;
+
+  const prevLatest = globalLatestDate;
+  let touched = 0;          // 실제로 IDB 내용이 바뀐 파일 수
+  let processed = 0;        // 읽어서 처리한 파일 수
+  const perType = [];       // 요약 문구용
   const failed = [];
-  for (const m of RAW_TYPE_META) {
-    let info;
-    try { info = await scanRawLatest(m.type); }
-    catch (err) { failed.push(`${m.label}(스캔실패)`); console.warn('[forceReadAll] scan 실패:', m.type, err); continue; }
-    if (!info || !info.name) continue;
-    let buf;
-    try { buf = await info.file.arrayBuffer(); }
-    catch (err) { failed.push(`${m.label}(읽기실패)`); console.warn('[forceReadAll] 파일 읽기 실패:', m.type, err); continue; }
-    let ok = false;
-    try { ok = await processRawFile(m.type, info.name, buf); }
-    catch (err) { failed.push(`${m.label}(처리실패)`); console.warn('[forceReadAll] 처리 실패:', m.type, err); continue; }
-    _markRawReflected(m.type, info.name, info.file);
-    if (ok) touched++;
-  }
-  if (touched > 0) {
-    fileJustUploaded = true;
-    try { await tryBuildTab4(); } catch (e) { console.warn('[forceReadAll] tryBuildTab4 실패:', e); }
-    if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
-      try { await syncToGitHub(true); } catch (e) { console.warn('[forceReadAll] GitHub sync 실패:', e); }
+
+  try {
+    for (const m of RAW_TYPE_META) {
+      let files;
+      try { files = await scanRawFiles(m.type); }
+      catch (err) { failed.push(`${m.label}(스캔실패)`); console.warn('[forceReadAll] scan 실패:', m.type, err); continue; }
+      if (!files || files.length === 0) continue;
+
+      // 일일성과(verify)는 pendingVerify 슬롯이 1개뿐 → 최신 파일만 적재
+      let targets;
+      if (m.type === 'verify') {
+        targets = [files[files.length - 1]];
+      } else {
+        // 미반영 파일 전부 + 최신 파일(이미 반영됐어도 강제 재반영)
+        const latest = files[files.length - 1];
+        targets = files.filter(f => !_rawAlreadyReflected(m.type, f.name, f.file));
+        if (!targets.some(t => t.name === latest.name)) targets.push(latest);
+        targets.sort((a, b) => a.mtime - b.mtime);   // 오래된 파일부터 누적
+      }
+
+      let typeTouched = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        if (statusEl) statusEl.textContent = `반영 중... ${m.label} ${i + 1}/${targets.length} — ${t.name}`;
+        let buf;
+        try { buf = await t.file.arrayBuffer(); }
+        catch (err) { failed.push(`${m.label}/${t.name}(읽기실패)`); console.warn('[forceReadAll] 파일 읽기 실패:', m.type, t.name, err); continue; }
+        let ok = false;
+        try { ok = await processRawFile(m.type, t.name, buf, { silent: true }); }
+        catch (err) { failed.push(`${m.label}/${t.name}(처리실패)`); console.warn('[forceReadAll] 처리 실패:', m.type, t.name, err); continue; }
+        _markRawReflected(m.type, t.name, t.file);
+        processed++;
+        if (ok) { typeTouched++; touched++; }
+      }
+      if (targets.length > 0) {
+        perType.push(typeTouched > 0
+          ? `${m.label} ${typeTouched}개`
+          : `${m.label} 변경없음`);
+      }
     }
+
+    if (touched > 0) {
+      fileJustUploaded = true;
+      try { await tryBuildTab4(); } catch (e) { console.warn('[forceReadAll] tryBuildTab4 실패:', e); }
+      await _ensureFilterCoversLatest(prevLatest);
+      if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
+        try { await syncToGitHub(true); } catch (e) { console.warn('[forceReadAll] GitHub sync 실패:', e); }
+      }
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+    // 진행률 텍스트로 덮어썼던 연결 상태 라벨 복구
+    if (statusEl) statusEl.innerHTML = `<span style="color:#2e7d32;">● 연결됨</span> <span style="color:#666;">${rawState.rootName || 'RAW'}</span>`;
   }
+
   await refreshRawStatus();
+
+  const summary = perType.length ? ` (${perType.join(' · ')})` : '';
+  const dateNote = globalLatestDate ? ` · 대시보드 당일: ${globalLatestDate}` : '';
   if (failed.length) {
-    showStatus(`${touched > 0 ? `${touched}종 반영, ` : ''}일부 실패: ${failed.join(', ')}`, touched > 0 ? 'warn' : 'error');
+    showStatus(`${processed}개 처리${summary} · 일부 실패: ${failed.join(', ')}${dateNote}`, touched > 0 ? 'warn' : 'error');
+  } else if (processed === 0) {
+    showStatus('폴더에 반영할 파일이 없습니다.', 'warn');
+  } else if (touched === 0) {
+    showStatus(`${processed}개 파일을 다시 읽었지만 새로 반영된 내용이 없습니다${summary}${dateNote}`, 'warn');
   } else {
-    showStatus(touched > 0 ? `폴더의 최신 파일 ${touched}종 반영 완료.` : '폴더에 반영할 파일이 없습니다.', 'success');
+    showStatus(`전체 반영 완료 — ${processed}개 처리${summary}${dateNote}`, 'success');
   }
+}
+
+// 새 날짜 데이터가 들어왔는데 조회기간 종료일이 그보다 앞이면, 대시보드/데이터 검증이
+// 계속 예전 날짜를 "당일"로 잡는다(=검증이 어제와 비교되는 원인).
+// prevLatest: 반영 직전의 globalLatestDate. 사용자가 "최신을 보고 있던" 경우에만
+// 종료일을 자동으로 늘리고, 과거 기간을 조회 중이면 건드리지 않고 안내만 한다.
+async function _ensureFilterCoversLatest(prevLatest) {
+  const endEl = document.getElementById('dateEnd');
+  if (!endEl || !globalLatestDate) return;
+  const end = endEl.value;
+  if (!end || end >= globalLatestDate) return;   // 전체 기간이거나 이미 새 날짜를 포함
+
+  const wasTrackingLatest = !prevLatest || end === prevLatest;
+  if (!wasTrackingLatest) {
+    showStatus(`새 날짜(${globalLatestDate}) 데이터가 반영됐지만 조회기간이 ${end}까지라 화면에는 보이지 않습니다. 조회기간을 늘려주세요.`, 'warn');
+    return;
+  }
+  endEl.value = globalLatestDate;
+  document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+  if (typeof updateDateRangeText === 'function') updateDateRangeText();
+  try { await tryBuildTab4(); } catch (e) { console.warn('[filter] 재빌드 실패:', e); }
+  showStatus(`새 날짜(${globalLatestDate}) 데이터가 들어와 조회기간 종료일을 ${globalLatestDate}로 늘렸습니다.`, 'success');
 }
 
 // 연결 버튼: rootHandle 있으면 권한 재요청, 없으면 picker
