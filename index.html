@@ -513,7 +513,8 @@
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
         <button id="btnRawRefresh" onclick="refreshRawStatus()" style="display:none;" title="30초 폴링을 기다리지 않고 지금 폴더를 다시 읽어 각 박스의 RAW 현황을 갱신합니다">🔄 폴더 다시 읽기</button>
-        <button id="btnRawReadAll" onclick="forceReadAllRaw()" style="display:none;" title="폴더의 미반영 파일 전부 + 종류별 최신 파일을 강제로 다시 읽어 IDB에 반영합니다">⤵ 전체 반영</button>
+        <button id="btnRawReadNew" onclick="forceReadNewRaw()" style="display:none;" title="폴더에 새로 들어왔거나 수정된 파일만 읽어 반영합니다 (평소에는 이걸 쓰세요 · 빠름)">⤵ 새 파일 반영</button>
+        <button id="btnRawReadAll" onclick="forceReadAllRaw()" style="display:none;" title="반영 기록이 없는 파일을 전부 다시 읽어 반영합니다 (확인용 · 파일이 많으면 오래 걸림)">⤵ 전체 다시 반영</button>
         <button id="btnRawConnect" onclick="onClickRawConnect()">RAW 폴더 연결</button>
         <button id="btnRawMigrate" onclick="migrateArchiveToRaw()" disabled title="IDB에 저장된 DB수 파일을 RAW 폴더로 일괄 백업">기존 파일 백업</button>
         <button id="btnRawDisconnect" class="danger" onclick="disconnectRawDir()" style="display:none;">연결 해제</button>
@@ -1944,6 +1945,46 @@ function _saveReflectedState(s) {
   try { localStorage.setItem(RAW_REFLECTED_KEY, JSON.stringify(s)); } catch {}
 }
 
+// ── 기준선(seen) ──
+// [새 파일 반영]이 "이 시점 이후에 폴더에 들어오거나 수정된 파일"만 보도록 하는 기준선.
+// 반영 기록과 분리한 이유: 기준선은 "폴더에 있는 걸 확인했다"는 뜻이고, 반영 기록은
+// "실제로 IDB에 넣었다"는 뜻이다. 공유폴더에 쌓인 과거 파일은 이미 대시보드에 들어있지만
+// 반영 기록에는 없으므로, 이걸 매번 다시 파싱하느라 [전체 반영]이 몇 분씩 걸렸다.
+//
+// 정합성 원칙 — 기준선은 다음 두 경우에만 전진한다:
+//   (1) 파일을 실제로 성공 반영했을 때 (_markRawReflected가 같이 기록)
+//   (2) 사용자가 "이건 이미 반영된 과거 파일"이라고 확인 버튼으로 명시했을 때
+// 단순 스캔이나 처리 실패로는 절대 전진하지 않는다. 즉 감지만 되고 반영 못 한 파일이
+// 조용히 사라지는 경우는 없고, 건너뛴 파일 수는 각 박스에 "미반영 N개"로 계속 보인다.
+const RAW_SEEN_KEY = 'wmdaily_rawSeenState';
+function _loadSeenState() {
+  try { return JSON.parse(localStorage.getItem(RAW_SEEN_KEY) || '{}'); }
+  catch { return {}; }
+}
+function _saveSeenState(s) {
+  try { localStorage.setItem(RAW_SEEN_KEY, JSON.stringify(s)); } catch {}
+}
+function _markRawSeen(type, name, file) {
+  if (!file) return;
+  const state = _loadSeenState();
+  if (!state[type]) state[type] = {};
+  state[type][name] = { size: file.size, mtime: file.lastModified };
+  _saveSeenState(state);
+}
+// 여러 건을 한 번에 기준선에 기록 (파일을 열지 않으므로 즉시 끝난다).
+function _markRawSeenBulk(entries) {
+  const state = _loadSeenState();
+  let n = 0;
+  for (const [type, name, file] of entries) {
+    if (!file) continue;
+    if (!state[type]) state[type] = {};
+    state[type][name] = { size: file.size, mtime: file.lastModified };
+    n++;
+  }
+  _saveSeenState(state);
+  return n;
+}
+
 // arrayBuffer를 받아 type에 맞게 IDB에 반영. 업로드 핸들러의 핵심 로직과 동일.
 async function processRawFile(type, name, arrayBuffer, opts) {
   const silent = !!(opts && opts.silent);
@@ -2138,10 +2179,12 @@ function updateRawDirUI() {
   const btnDisconnect = document.getElementById('btnRawDisconnect');
   const btnMigrate = document.getElementById('btnRawMigrate');
   const btnRefresh = document.getElementById('btnRawRefresh');
+  const btnReadNew = document.getElementById('btnRawReadNew');
   const btnReadAll = document.getElementById('btnRawReadAll');
   if (!row) return;
   // 박스별 RAW 슬롯/전역 버튼은 권한 부여된 연결 상태에서만 노출 (아래 granted 분기에서 다시 켬)
   if (btnRefresh) btnRefresh.style.display = 'none';
+  if (btnReadNew) btnReadNew.style.display = 'none';
   if (btnReadAll) btnReadAll.style.display = 'none';
   clearRawSlots();
   // 로그인된 사용자만 표시
@@ -2166,6 +2209,7 @@ function updateRawDirUI() {
     if (btnDisconnect) btnDisconnect.style.display = '';
     if (btnMigrate) btnMigrate.disabled = false;
     if (btnRefresh) btnRefresh.style.display = '';
+    if (btnReadNew) btnReadNew.style.display = '';
     if (btnReadAll) btnReadAll.style.display = '';
     refreshRawStatus();
   } else {
@@ -2221,12 +2265,14 @@ function _rawAlreadyReflected(type, name, file) {
 }
 
 // 방금 IDB에 반영(처리)한 파일을 반영 기록에 남김 → 박스 뱃지가 "✅ 반영됨"으로 표시
+// 반영된 파일은 당연히 기준선에도 포함되므로 seen도 같이 기록한다.
 function _markRawReflected(type, name, file) {
   if (!file) return;
   const state = _loadReflectedState();
   if (!state[type]) state[type] = {};
   state[type][name] = { size: file.size, mtime: file.lastModified };
   _saveReflectedState(state);
+  _markRawSeen(type, name, file);
 }
 
 // 각 업로드 박스 안의 RAW 슬롯을 비우고 숨김 (미연결/권한없음 상태)
@@ -2250,7 +2296,13 @@ function _renderRawSlot(type, info) {
       ? '<span class="raw-badge-ok">✅ 반영됨</span>'
       : '<span class="raw-badge-new">🆕 미반영</span>';
     const more = info.count > 1 ? ` <span class="raw-empty">외 ${info.count - 1}개</span>` : '';
-    detail = `<span class="raw-name" title="${info.name}">${info.name}</span>${more} · <span class="raw-when">${when}</span> · ${badge}`;
+    // 기준선 이후 새로 들어온 파일 수 / 아직 IDB에 반영 안 된 파일 수를 같이 보여준다.
+    // "미반영"은 [새 파일 반영]이 건너뛰는 과거 파일이 몇 개인지 항상 드러내기 위한 것.
+    const counts = [];
+    if (info.fresh > 0) counts.push(`<span class="raw-badge-new">새 파일 ${info.fresh}개</span>`);
+    if (info.unreflected > 0) counts.push(`<span class="raw-empty">미반영 ${info.unreflected}개</span>`);
+    const tail = counts.length ? ` · ${counts.join(' · ')}` : '';
+    detail = `<span class="raw-name" title="${info.name}">${info.name}</span>${more} · <span class="raw-when">${when}</span> · ${badge}${tail}`;
   }
   slot.innerHTML = `<span class="raw-tag">RAW</span>${detail}`
     + `<button onclick="forceReadRawType('${type}')" title="이 폴더의 최신 파일을 즉시 반영">↻ 지금 반영</button>`;
@@ -2268,9 +2320,31 @@ async function refreshRawStatus() {
     if (slot) { slot.classList.add('show'); slot.innerHTML = '<span class="raw-tag">RAW</span><span class="raw-empty">읽는 중…</span>'; }
   }
   for (const m of RAW_TYPE_META) {
-    const info = await scanRawLatest(m.type);
-    _renderRawSlot(m.type, info);
+    const files = await scanRawFiles(m.type);
+    _renderRawSlot(m.type, _rawSlotInfo(m.type, files));
   }
+}
+
+// 기록맵(name → {size,mtime})에 이 파일이 그대로 들어있는지. 파일이 많을 때
+// localStorage를 파일마다 다시 파싱하지 않도록, 맵을 한 번만 꺼내 쓰는 용도.
+function _rawMetaHit(map, f) {
+  const prev = map && map[f.name];
+  return !!(prev && prev.size === f.file.size && prev.mtime === f.file.lastModified);
+}
+
+// scanRawFiles 결과 → 슬롯 렌더용 요약(최신 파일 + 새 파일/미반영 개수)
+function _rawSlotInfo(type, files) {
+  if (!files) return null;
+  if (files.length === 0) return { name: null, mtime: 0, count: 0, fresh: 0, unreflected: 0 };
+  const latest = files[files.length - 1];
+  const seen = _loadSeenState()[type] || {};
+  const refl = _loadReflectedState()[type] || {};
+  let fresh = 0, unreflected = 0;
+  for (const f of files) {
+    if (!_rawMetaHit(seen, f)) fresh++;
+    if (!_rawMetaHit(refl, f)) unreflected++;
+  }
+  return { name: latest.name, file: latest.file, mtime: latest.mtime, count: files.length, fresh, unreflected };
 }
 
 // 한 type의 최신 파일을 즉시 읽어 IDB에 반영 (수동 리딩). 30초 폴링을 기다리지 않음.
@@ -2319,91 +2393,236 @@ async function forceReadRawType(type) {
   return true;
 }
 
-// 폴더 안의 "미반영 파일 전부 + 종류별 최신 파일(강제)"을 즉시 반영.
-// 예전에는 종류당 최신 1개만 처리해서, 최신 수정시각이 아닌 오늘 파일이 폴더에 있어도
-// 통째로 건너뛰고 "반영 완료"만 뜨는 문제가 있었다.
-async function forceReadAllRaw() {
+// 반영 대상이 이 개수를 넘으면 "정말 다 읽을까요?"를 한 번 물어본다.
+// 공유폴더에 쌓인 과거 파일을 모르고 전부 파싱하는 사고를 막기 위한 것.
+const RAW_BULK_CONFIRM_THRESHOLD = 10;
+
+// 4종류 폴더를 한 번씩 훑어 파일 목록만 만든다 (파일을 열지 않으므로 빠르다).
+// 반환: { files: {type: [...]}, failed: [label...] }
+async function _scanAllRawTypes() {
+  const files = {};
+  const failed = [];
+  for (const m of RAW_TYPE_META) {
+    let list;
+    try { list = await scanRawFiles(m.type); }
+    catch (err) { list = null; console.warn('[RAW scan] 실패:', m.type, err); }
+    if (!list) { failed.push(`${m.label}(스캔실패)`); continue; }
+    files[m.type] = list;
+  }
+  return { files, failed };
+}
+
+// targets: {type: [{name,file,mtime}...]} 를 실제로 IDB에 반영한다.
+// - 오래된 파일부터 처리 (DB수 누적 순서를 보존)
+// - 성공한 파일만 반영/기준선 기록 → 실패한 파일은 다음에 다시 시도된다
+async function _reflectRawTargets(targets, statusEl) {
+  const prevLatest = globalLatestDate;
+  let touched = 0;      // 실제로 IDB 내용이 바뀐 파일 수
+  let processed = 0;    // 읽어서 처리한 파일 수
+  const perType = [];
+  const failed = [];
+
+  for (const m of RAW_TYPE_META) {
+    let list = targets[m.type];
+    if (!list || list.length === 0) continue;
+    list = list.slice().sort((a, b) => a.mtime - b.mtime);
+    // 일일성과(verify)는 pendingVerify 슬롯이 1개뿐 → 최신 파일만 적재.
+    // 나머지는 파싱하지 않고 기준선에만 넣어 다음에 또 후보로 잡히지 않게 한다.
+    if (m.type === 'verify' && list.length > 1) {
+      const latest = list[list.length - 1];
+      for (const t of list) if (t !== latest) _markRawSeen('verify', t.name, t.file);
+      list = [latest];
+    }
+
+    let typeTouched = 0;
+    for (let i = 0; i < list.length; i++) {
+      const t = list[i];
+      if (statusEl) statusEl.textContent = `반영 중... ${m.label} ${i + 1}/${list.length} — ${t.name}`;
+      let buf;
+      try { buf = await t.file.arrayBuffer(); }
+      catch (err) { failed.push(`${m.label}/${t.name}(읽기실패)`); console.warn('[RAW reflect] 파일 읽기 실패:', m.type, t.name, err); continue; }
+      let ok = false;
+      try { ok = await processRawFile(m.type, t.name, buf, { silent: true }); }
+      catch (err) { failed.push(`${m.label}/${t.name}(처리실패)`); console.warn('[RAW reflect] 처리 실패:', m.type, t.name, err); continue; }
+      _markRawReflected(m.type, t.name, t.file);
+      processed++;
+      if (ok) { typeTouched++; touched++; }
+    }
+    perType.push(typeTouched > 0 ? `${m.label} ${typeTouched}개` : `${m.label} 변경없음`);
+  }
+
+  if (touched > 0) {
+    fileJustUploaded = true;
+    try { await tryBuildTab4(); } catch (e) { console.warn('[RAW reflect] tryBuildTab4 실패:', e); }
+    await _ensureFilterCoversLatest(prevLatest);
+    if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
+      try { await syncToGitHub(true); } catch (e) { console.warn('[RAW reflect] GitHub sync 실패:', e); }
+    }
+  }
+  return { touched, processed, perType, failed };
+}
+
+function _rawBtnsDisabled(v) {
+  for (const id of ['btnRawReadNew', 'btnRawReadAll', 'btnRawRefresh']) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = v;
+  }
+}
+function _restoreRawStatusLabel(statusEl) {
+  if (statusEl) statusEl.innerHTML = `<span style="color:#2e7d32;">● 연결됨</span> <span style="color:#666;">${rawState.rootName || 'RAW'}</span>`;
+}
+function _reportRawReflect(res, doneLabel) {
+  const summary = res.perType.length ? ` (${res.perType.join(' · ')})` : '';
+  const dateNote = globalLatestDate ? ` · 대시보드 당일: ${globalLatestDate}` : '';
+  if (res.failed.length) {
+    showStatus(`${res.processed}개 처리${summary} · 일부 실패: ${res.failed.join(', ')}${dateNote}`, res.touched > 0 ? 'warn' : 'error');
+  } else if (res.processed === 0) {
+    showStatus('폴더에 반영할 파일이 없습니다.', 'warn');
+  } else if (res.touched === 0) {
+    showStatus(`${res.processed}개 파일을 다시 읽었지만 새로 반영된 내용이 없습니다${summary}${dateNote}`, 'warn');
+  } else {
+    showStatus(`${doneLabel} — ${res.processed}개 처리${summary}${dateNote}`, 'success');
+  }
+}
+
+// [새 파일 반영] — 기준선 이후 폴더에 새로 들어왔거나 수정된 파일만 반영한다.
+// 과거 파일 전체를 다시 파싱하지 않으므로 평소에는 몇 초면 끝난다.
+// 기준선이 아직 없는(=이 기능을 처음 쓰는) PC에서는 폴더 전체가 "새 파일"로 잡히므로,
+// 그때는 조용히 건너뛰지 않고 사용자에게 한 번 물어본다.
+async function forceReadNewRaw() {
   if (!rawState.rootHandle || rawState.permission !== 'granted') {
     showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
     return;
   }
   const statusEl = document.getElementById('rawDirStatus');
-  const btn = document.getElementById('btnRawReadAll');
-  if (btn) btn.disabled = true;
+  _rawBtnsDisabled(true);
+  if (statusEl) statusEl.textContent = '폴더 확인 중...';
 
-  const prevLatest = globalLatestDate;
-  let touched = 0;          // 실제로 IDB 내용이 바뀐 파일 수
-  let processed = 0;        // 읽어서 처리한 파일 수
-  const perType = [];       // 요약 문구용
-  const failed = [];
+  let scan;
+  try { scan = await _scanAllRawTypes(); }
+  catch (err) {
+    _rawBtnsDisabled(false); _restoreRawStatusLabel(statusEl);
+    showStatus(`폴더 확인 실패: ${err.message}`, 'error');
+    return;
+  }
+  _restoreRawStatusLabel(statusEl);
 
+  const seenState = _loadSeenState();
+  const targets = {};
+  let newTotal = 0;
+  for (const m of RAW_TYPE_META) {
+    const list = scan.files[m.type];
+    if (!list || list.length === 0) continue;
+    const seen = seenState[m.type] || {};
+    const fresh = list.filter(f => !_rawMetaHit(seen, f));
+    if (fresh.length) { targets[m.type] = fresh; newTotal += fresh.length; }
+  }
+
+  if (newTotal === 0) {
+    _rawBtnsDisabled(false);
+    await refreshRawStatus();
+    const note = scan.failed.length ? ` · 스캔 실패: ${scan.failed.join(', ')}` : '';
+    showStatus(`새로 들어온 파일이 없습니다.${note}`, scan.failed.length ? 'warn' : 'success');
+    return;
+  }
+
+  // 한 번에 너무 많으면 = 대개 그동안 폴더에 쌓여 있던 과거 파일이다.
+  // 몰래 건너뛰지도, 몰래 몇 분씩 파싱하지도 않고 사용자에게 선택을 넘긴다.
+  if (newTotal >= RAW_BULK_CONFIRM_THRESHOLD) {
+    _rawBtnsDisabled(false);
+    const seedOnly = confirm(
+      `폴더에 반영 기록이 없는 파일이 ${newTotal}개 있습니다.\n\n` +
+      `[확인] 이미 대시보드에 반영된 과거 파일입니다\n` +
+      `  → 파일을 열지 않고 목록에만 기록합니다 (즉시 완료).\n` +
+      `  → 이후 [새 파일 반영]은 새로 들어오는 파일만 처리합니다.\n\n` +
+      `[취소] ${newTotal}개를 전부 다시 읽어 반영합니다 (오래 걸립니다).`
+    );
+    if (seedOnly) {
+      const entries = [];
+      for (const m of RAW_TYPE_META) {
+        for (const f of (scan.files[m.type] || [])) entries.push([m.type, f.name, f.file]);
+      }
+      const n = _markRawSeenBulk(entries);
+      await refreshRawStatus();
+      showStatus(`${n}개 파일을 기준선으로 기록했습니다. 이제부터 새로 들어오는 파일만 반영됩니다. (건너뛴 파일은 각 박스의 "미반영 N개"로 계속 확인할 수 있습니다)`, 'success');
+      return;
+    }
+    // 취소 → 전부 반영 (기존 [전체 반영]과 동일한 동작)
+    await forceReadAllRaw({ skipConfirm: true });
+    return;
+  }
+
+  let res;
   try {
-    for (const m of RAW_TYPE_META) {
-      let files;
-      try { files = await scanRawFiles(m.type); }
-      catch (err) { failed.push(`${m.label}(스캔실패)`); console.warn('[forceReadAll] scan 실패:', m.type, err); continue; }
-      if (!files || files.length === 0) continue;
-
-      // 일일성과(verify)는 pendingVerify 슬롯이 1개뿐 → 최신 파일만 적재
-      let targets;
-      if (m.type === 'verify') {
-        targets = [files[files.length - 1]];
-      } else {
-        // 미반영 파일 전부 + 최신 파일(이미 반영됐어도 강제 재반영)
-        const latest = files[files.length - 1];
-        targets = files.filter(f => !_rawAlreadyReflected(m.type, f.name, f.file));
-        if (!targets.some(t => t.name === latest.name)) targets.push(latest);
-        targets.sort((a, b) => a.mtime - b.mtime);   // 오래된 파일부터 누적
-      }
-
-      let typeTouched = 0;
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i];
-        if (statusEl) statusEl.textContent = `반영 중... ${m.label} ${i + 1}/${targets.length} — ${t.name}`;
-        let buf;
-        try { buf = await t.file.arrayBuffer(); }
-        catch (err) { failed.push(`${m.label}/${t.name}(읽기실패)`); console.warn('[forceReadAll] 파일 읽기 실패:', m.type, t.name, err); continue; }
-        let ok = false;
-        try { ok = await processRawFile(m.type, t.name, buf, { silent: true }); }
-        catch (err) { failed.push(`${m.label}/${t.name}(처리실패)`); console.warn('[forceReadAll] 처리 실패:', m.type, t.name, err); continue; }
-        _markRawReflected(m.type, t.name, t.file);
-        processed++;
-        if (ok) { typeTouched++; touched++; }
-      }
-      if (targets.length > 0) {
-        perType.push(typeTouched > 0
-          ? `${m.label} ${typeTouched}개`
-          : `${m.label} 변경없음`);
-      }
-    }
-
-    if (touched > 0) {
-      fileJustUploaded = true;
-      try { await tryBuildTab4(); } catch (e) { console.warn('[forceReadAll] tryBuildTab4 실패:', e); }
-      await _ensureFilterCoversLatest(prevLatest);
-      if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
-        try { await syncToGitHub(true); } catch (e) { console.warn('[forceReadAll] GitHub sync 실패:', e); }
-      }
-    }
+    res = await _reflectRawTargets(targets, statusEl);
   } finally {
-    if (btn) btn.disabled = false;
-    // 진행률 텍스트로 덮어썼던 연결 상태 라벨 복구
-    if (statusEl) statusEl.innerHTML = `<span style="color:#2e7d32;">● 연결됨</span> <span style="color:#666;">${rawState.rootName || 'RAW'}</span>`;
+    _rawBtnsDisabled(false);
+    _restoreRawStatusLabel(statusEl);
   }
-
   await refreshRawStatus();
+  if (scan.failed.length) res.failed.push(...scan.failed);
+  _reportRawReflect(res, '새 파일 반영 완료');
+}
 
-  const summary = perType.length ? ` (${perType.join(' · ')})` : '';
-  const dateNote = globalLatestDate ? ` · 대시보드 당일: ${globalLatestDate}` : '';
-  if (failed.length) {
-    showStatus(`${processed}개 처리${summary} · 일부 실패: ${failed.join(', ')}${dateNote}`, touched > 0 ? 'warn' : 'error');
-  } else if (processed === 0) {
-    showStatus('폴더에 반영할 파일이 없습니다.', 'warn');
-  } else if (touched === 0) {
-    showStatus(`${processed}개 파일을 다시 읽었지만 새로 반영된 내용이 없습니다${summary}${dateNote}`, 'warn');
-  } else {
-    showStatus(`전체 반영 완료 — ${processed}개 처리${summary}${dateNote}`, 'success');
+// [전체 다시 반영] — 반영 기록이 없는 파일 전부 + 종류별 최신 파일(강제 재반영).
+// 기준선과 무관하게 훑으므로 "혹시 빠진 게 있나?" 확인할 때 쓴다. 파일이 많으면 느리다.
+async function forceReadAllRaw(opts) {
+  if (!rawState.rootHandle || rawState.permission !== 'granted') {
+    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
+    return;
   }
+  const skipConfirm = !!(opts && opts.skipConfirm === true);
+  const statusEl = document.getElementById('rawDirStatus');
+  _rawBtnsDisabled(true);
+  if (statusEl) statusEl.textContent = '폴더 확인 중...';
+
+  let scan;
+  try { scan = await _scanAllRawTypes(); }
+  catch (err) {
+    _rawBtnsDisabled(false); _restoreRawStatusLabel(statusEl);
+    showStatus(`폴더 확인 실패: ${err.message}`, 'error');
+    return;
+  }
+  _restoreRawStatusLabel(statusEl);
+
+  const reflState = _loadReflectedState();
+  const targets = {};
+  let total = 0;
+  for (const m of RAW_TYPE_META) {
+    const list = scan.files[m.type];
+    if (!list || list.length === 0) continue;
+    if (m.type === 'verify') { targets.verify = list; total += 1; continue; }
+    // 미반영 파일 전부 + 최신 파일(이미 반영됐어도 강제 재반영)
+    const refl = reflState[m.type] || {};
+    const latest = list[list.length - 1];
+    const pick = list.filter(f => !_rawMetaHit(refl, f));
+    if (!pick.some(t => t.name === latest.name)) pick.push(latest);
+    targets[m.type] = pick;
+    total += pick.length;
+  }
+
+  if (total === 0) {
+    _rawBtnsDisabled(false);
+    await refreshRawStatus();
+    showStatus('폴더에 반영할 파일이 없습니다.', 'warn');
+    return;
+  }
+  if (!skipConfirm && total >= RAW_BULK_CONFIRM_THRESHOLD) {
+    _rawBtnsDisabled(false);
+    if (!confirm(`파일 ${total}개를 전부 다시 읽습니다.\n개수가 많으면 수 분 걸릴 수 있습니다.\n\n계속할까요?`)) return;
+    _rawBtnsDisabled(true);
+  }
+
+  let res;
+  try {
+    res = await _reflectRawTargets(targets, statusEl);
+  } finally {
+    _rawBtnsDisabled(false);
+    _restoreRawStatusLabel(statusEl);
+  }
+  await refreshRawStatus();
+  if (scan.failed.length) res.failed.push(...scan.failed);
+  _reportRawReflect(res, '전체 반영 완료');
 }
 
 // 새 날짜 데이터가 들어왔는데 조회기간 종료일이 그보다 앞이면, 대시보드/데이터 검증이
