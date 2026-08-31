@@ -4331,12 +4331,18 @@ function captureFull(el, opts) {
   // 콘텐츠 전체 너비 계산 (테이블 min-width 1500 등으로 뷰포트보다 넓을 수 있음)
   let contentW = el.scrollWidth;
   el.querySelectorAll('.perf-table').forEach(t => { contentW = Math.max(contentW, t.scrollWidth); });
-  const fullW = Math.ceil(contentW + 80); // main-content 좌우 패딩 여유분
+  contentW = Math.ceil(contentW);
+  // main-content 좌우 패딩은 렌더 뷰포트(windowWidth)에만 더한다.
+  // width는 요소 왼쪽 끝부터 잘라내므로 여기에 패딩을 더하면 우측에 배경색 여백이 남는다.
+  const elRect = el.getBoundingClientRect();
+  const docW = document.documentElement.clientWidth;
+  const padL = Math.max(0, Math.round(elRect.left));
+  const padR = Math.max(0, Math.round(docW - elRect.right));
   return html2canvas(el, Object.assign({
     scale: 2,
     backgroundColor: '#f0f2f5',
-    width: fullW,
-    windowWidth: fullW,
+    width: contentW,
+    windowWidth: contentW + padL + padR,
   }, opts || {})).finally(() => {
     wraps.forEach((w, i) => { w.style.overflowX = saved[i]; });
   });
