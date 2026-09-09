@@ -4574,9 +4574,11 @@ function downloadPng(type) {
 // autoSaveAccForDate()는 빌드된 당일만 저장하므로, 이것 없이는 [동기화]를 먼저 눌러야만
 // 전체 시트가 들어간 엑셀이 나왔다. 이제 버튼 순서와 무관하게 항상 같은 결과가 나온다.
 async function ensureAccBuilt() {
-  if (lastGroupedMain || lastGroupedTalkis) {
-    const dateKey = lastLatestDate || new Date().toISOString().slice(0, 10);
-    try { autoSaveAccForDate(dateKey, lastGroupedMain, lastGroupedTalkis); }
+  // lastLatestDate가 없으면(대시보드 미빌드·IDB 복원 중) 오늘 날짜로 빈 스냅샷을 만들지 않는다.
+  // 예전에는 오늘 날짜로 폴백해서, DB가 아직 안 올라온 상태의 0짜리 스냅샷이 저장·동기화됐다.
+  // 대시보드는 스냅샷을 우선 사용하므로 그게 그대로 화면의 0이 됐다. (2026-09-09)
+  if (lastLatestDate && (lastGroupedMain || lastGroupedTalkis)) {
+    try { autoSaveAccForDate(lastLatestDate, lastGroupedMain, lastGroupedTalkis); }
     catch (e) { console.warn('[ensureAcc] 당일 저장 실패:', e); }
   }
   try { return await buildAllDateAccumulated(false); }
@@ -4742,17 +4744,33 @@ async function downloadExcel(tab) {
 // ══════════════════════════════════════════════
 
 // 방법2: 대시보드 빌드 시 자동 저장 (최신 날짜는 항상 덮어쓰기)
+// 스냅샷에 담긴 누적 DB 합계. 인원은 있는데 이 값이 0이면 DB가 아직 안 올라온 화면을 찍은 것이다.
+function _accSnapshotDbTotal(data) {
+  let people = 0, db = 0;
+  for (const [key, arr] of Object.entries(data)) {
+    if (key.startsWith('_') || !Array.isArray(arr)) continue;
+    for (const p of arr) { people++; db += (p.cumDbAll || 0); }
+  }
+  return { people, db };
+}
+
 function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
-  if (groupedMain) {
-    const data = serializeGrouped(groupedMain);
+  // 인원은 있는데 DB가 통째로 0인 스냅샷은 저장하지 않는다.
+  // IDB의 dates 복원이 끝나기 전에 마감이 돌면 이런 화면이 찍히는데, 대시보드는 스냅샷을
+  // 우선 사용하므로 한 번 저장되면 원본이 멀쩡해도 계속 0으로 보인다. (2026-09-09 사고)
+  const save = (tab, grouped) => {
+    if (!grouped) return;
+    const data = serializeGrouped(grouped);
+    const { people, db } = _accSnapshotDbTotal(data);
+    if (people > 0 && db === 0) {
+      console.warn(`[acc] ${tab} ${dateKey} 스냅샷 저장 건너뜀 — 인원 ${people}명인데 누적 DB가 0 (데이터 로딩 중으로 판단)`);
+      return;
+    }
     data._dateLabel = dateKey;
-    localStorage.setItem(getAccStorageKey('main', dateKey), JSON.stringify(data));
-  }
-  if (groupedTalkis) {
-    const data = serializeGrouped(groupedTalkis);
-    data._dateLabel = dateKey;
-    localStorage.setItem(getAccStorageKey('talkis', dateKey), JSON.stringify(data));
-  }
+    localStorage.setItem(getAccStorageKey(tab, dateKey), JSON.stringify(data));
+  };
+  save('main', groupedMain);
+  save('talkis', groupedTalkis);
   refreshAccDisplay();
 }
 
@@ -5345,22 +5363,14 @@ async function saveAccAll() {
   btn.style.opacity = '0.6';
   btn.style.pointerEvents = 'none';
 
-  const dateKey = lastLatestDate || new Date().toISOString().slice(0, 10);
+  // 오늘 날짜로 폴백하지 않는다 — 대시보드가 안 잡힌 상태에서 빈 스냅샷을 만들던 원인이었다.
+  const dateKey = lastLatestDate;
   const saved = [];
-
-  // 뇌새김 저장
-  if (lastGroupedMain) {
-    const data = serializeGrouped(lastGroupedMain);
-    data._dateLabel = dateKey;
-    localStorage.setItem(getAccStorageKey('main', dateKey), JSON.stringify(data));
-    saved.push('뇌새김');
-  }
-  // 톡이즈 저장
-  if (lastGroupedTalkis) {
-    const data = serializeGrouped(lastGroupedTalkis);
-    data._dateLabel = dateKey;
-    localStorage.setItem(getAccStorageKey('talkis', dateKey), JSON.stringify(data));
-    saved.push('톡이즈');
+  if (dateKey) {
+    // 0짜리 스냅샷 방지 가드를 함께 타도록 autoSaveAccForDate를 재사용한다
+    autoSaveAccForDate(dateKey, lastGroupedMain, lastGroupedTalkis);
+    if (lastGroupedMain) saved.push('뇌새김');
+    if (lastGroupedTalkis) saved.push('톡이즈');
   }
 
   // 방법1: 빠진 날짜 자동 보충
