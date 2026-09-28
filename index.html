@@ -853,6 +853,30 @@ function isValidMonthKey(mk) {
   return y >= 2020 && y <= 2099 && m >= 1 && m <= 12;
 }
 
+// 분배일 유효성. parseDate()의 new Date()가 "2000"·"2000-02" 같은 불완전 값을 2000-01-01 식으로
+// 받아들여, 누적 날짜에 2000-01-01/02-01/05-01/07-01이 섞여 들어갔다. (2026-09-28)
+function isValidDistDate(d) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= '2020-01-01';
+}
+
+// 공유 데이터(data.json 형식)에서 유효하지 않은 분배일 항목을 제자리 제거. 같은 객체를 반환.
+function stripInvalidDates(data) {
+  if (!data) return data;
+  if (data.dates) {
+    for (const k of Object.keys(data.dates)) if (!isValidDistDate(k)) delete data.dates[k];
+  }
+  if (data.keyMeta) {
+    for (const [k, v] of Object.entries(data.keyMeta)) if (v && v.d && !isValidDistDate(v.d)) delete data.keyMeta[k];
+  }
+  if (data.accumulated) {
+    for (const k of Object.keys(data.accumulated)) {
+      const m = k.match(/_(\d{4}-\d{2}-\d{2})$/);
+      if (m && !isValidDistDate(m[1])) delete data.accumulated[k];
+    }
+  }
+  return data;
+}
+
 function isHoliday(dateStr) {
   if (!dateStr) return false;
   if (KOREAN_HOLIDAYS.has(dateStr)) return true;
@@ -1445,7 +1469,7 @@ async function accumulateDbData(rows, opts) {
     // OB명에 "군자" 또는 "관리자" 포함 시 완전 제외
     if (name.includes('군자') || name.includes('관리자')) return;
     const distDate = datePart(row[DB_COL.distributeDate]);
-    if (!distDate) return;
+    if (!distDate || !isValidDistDate(distDate)) return;
     const mediaCode = String(row[DB_COL.mediaCode] || '').trim();
     const isIN = mediaCode === '';
     const orderDateStr = datePart(row[DB_COL.orderDate]);
@@ -5883,7 +5907,7 @@ async function fetchRemoteData() {
     } else {
       jsonText = new TextDecoder().decode(bytes);
     }
-    return JSON.parse(jsonText);
+    return stripInvalidDates(JSON.parse(jsonText));
   } catch (e) {
     console.warn('fetchRemoteData 오류:', e);
     return null;
@@ -6025,7 +6049,7 @@ async function syncToGitHub(includeAccumulated, opts) {
 
     // 2. 원격 데이터 다운로드 + 병합
     const remoteData = await fetchRemoteData();
-    const sharedData = remoteData ? mergeSharedData(remoteData, localData) : localData;
+    const sharedData = stripInvalidDates(remoteData ? mergeSharedData(remoteData, localData) : localData);
 
     // 3. gzip 압축
     const jsonBytes = new TextEncoder().encode(JSON.stringify(sharedData));
@@ -6209,7 +6233,7 @@ async function loadSharedData() {
       jsonText = new TextDecoder().decode(rawBytes);
     }
     rawBytes = null; // 메모리 해제
-    const shared = JSON.parse(jsonText);
+    const shared = stripInvalidDates(JSON.parse(jsonText));
     jsonText = null; // 메모리 해제
     if (!shared.dates || !shared.roster) return false;
 
@@ -6574,6 +6598,48 @@ function setupFavicon() {
   img.src = document.querySelector('.header-left img').src;
 }
 
+// ── 가짜 분배일(2000-xx-01 등) 정리: IDB dates·keyMeta + localStorage 누적 스냅샷 ──
+// isValidDistDate() 도입 전에 저장된 항목을 1회 지운다. 원격 data.json은 다음 동기화 때
+// stripInvalidDates()를 거쳐 함께 정리된다.
+async function purgeInvalidDates() {
+  const DONE_KEY = 'invalid_dates_purged_v1';
+  if (localStorage.getItem(DONE_KEY)) return;
+  try {
+    const db = await openDB();
+    const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+    const txDone = new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error); });
+    const sweep = (storeName, isBad) => new Promise((resolve, reject) => {
+      let n = 0;
+      const req = tx.objectStore(storeName).openCursor();
+      req.onsuccess = e => {
+        const cursor = e.target.result;
+        if (!cursor) return resolve(n);
+        if (isBad(cursor.key, cursor.value)) { cursor.delete(); n++; }
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+    const [nDates, nKeys] = await Promise.all([
+      sweep(STORE_DATES, k => !isValidDistDate(String(k))),
+      sweep(STORE_KEYS, (k, v) => !!(v && v.d && !isValidDistDate(v.d))),
+    ]);
+    await txDone;
+    db.close();
+
+    let nAcc = 0;
+    for (const tab of ['main', 'talkis']) {
+      for (const dt of getAccSavedDates(tab)) {
+        if (!isValidDistDate(dt)) { localStorage.removeItem(getAccStorageKey(tab, dt)); nAcc++; }
+      }
+    }
+    _accCache = null;
+    localStorage.setItem(DONE_KEY, '1');
+    console.log(`[purgeInvalidDates] dates ${nDates} · keyMeta ${nKeys} · 누적 ${nAcc}건 삭제`);
+  } catch (e) {
+    console.warn('[purgeInvalidDates] 실패 (다음 실행 때 재시도):', e);
+  }
+}
+
 // ── V6vi25 역마이그레이션: 이전 마이그레이션이 IDB에서 차감한 값을 복원 ──
 // 업로드 시 제외 로직(line 1115)이 이미 V6vi25를 걸러내므로, IDB 차감은 이중 제외를 유발함
 async function migrateV6vi25() {
@@ -6745,6 +6811,7 @@ function setupAutoSync() {
   showIndeterminate('데이터를 불러오는 중입니다…<br><small style="color:#888;">잠시만 기다려주세요.</small>', '초기화 중...');
 
   await migrateV6vi25().catch(() => {});
+  await purgeInvalidDates();
   refreshStorageDisplay().catch(() => {});
   cleanupAccumulatedByMonth();
   refreshAccDisplay();
