@@ -3449,6 +3449,8 @@ function parseRosterRows(rows, monthKey) {
     const hireDate = fmtDateShort(row[ROSTER_COL.hireDate]);
 
     let group = '';
+    // 담당·그룹 둘 다 빈 인원: 계약 귀속용으로만 명단 유지, 계약 있을 때만 '미분류'로 리스트업
+    const unassigned = !role && !groupRaw;
     if (role === '제2외국어' || role === '톡이즈') {
       group = role;
     } else if (role === '뇌새김영어') {
@@ -3463,7 +3465,7 @@ function parseRosterRows(rows, monthKey) {
       group = groupRaw || role || '미분류';
     }
 
-    map.set(name, { group, center, team, hireDate, role });
+    map.set(name, { group, center, team, hireDate, role, unassigned });
   });
   return map;
 }
@@ -4175,6 +4177,7 @@ async function tryBuildTab4() {
       for (const p of persons) {
         snapRoster.set(p.name, {
           group: p.group, center: p.center, team: p.team, hireDate: p.hireDate,
+          unassigned: p.group === '미분류',
         });
         if (p.prevGroup) snapPrevRoster.set(p.name, { group: p.prevGroup });
         personStats.set(p.name, {
@@ -4323,8 +4326,11 @@ async function tryBuildTab4() {
     const g = info.group;
     const prevInfo = prevMonthRoster ? prevMonthRoster.get(name) : null;
     const prevGroup = prevInfo ? prevInfo.group : null;
-    // 퇴사자: 데이터가 있으면 무조건 리스트업
-    if (info.isResigned) {
+    // 담당·그룹 미기재: 계약(취소 제외, IN 포함) 1건 이상일 때만 '미분류'로 리스트업
+    if (info.unassigned) {
+      if (stats.cumContractAll <= 0) return;
+    } else if (info.isResigned) {
+      // 퇴사자: 데이터가 있으면 무조건 리스트업
       if (stats.cumDbAll <= 0 && stats.cumContractAll <= 0) return;
     } else if (!prevGroup && prevMonthRoster) {
       // 신규 입사자(이전 명단에 없던 인원): IN+휴일 제외 계약수 1건 이상이어야 리스트업
@@ -4750,8 +4756,11 @@ async function downloadAll(opts) {
 
   const files = [];
   try {
-    step('누적 정리 중...');
-    await ensureAccBuilt();
+    // 오늘 마감은 직전 단계에서 이미 누적 저장을 했으므로 건너뛴다 (IDB 전체 읽기 중복 방지)
+    if (!opts.skipAcc) {
+      step('누적 정리 중...');
+      await ensureAccBuilt();
+    }
 
     for (const [type, label] of [['eng', '영어'], ['lang', '제2외국어'], ['talkis', '톡이즈']]) {
       step(`PNG(${label}) 생성...`);
@@ -5041,6 +5050,7 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
     const g = info.group;
     const prevInfo = prevMonthRoster ? prevMonthRoster.get(name) : null;
     const prevGroup = prevInfo ? prevInfo.group : null;
+    if (info.unassigned && stats.cumContractAll <= 0) return;
     if (talkisGroups.includes(g)) {
       if (!groupedTalkis.has(g)) groupedTalkis.set(g, []);
       groupedTalkis.get(g).push({ name, ...info, ...stats, prevGroup });
@@ -5428,10 +5438,10 @@ function scheduleIdleAutoSync() {
   }, IDLE_SYNC_DELAY);
 }
 
-// ── 오늘 마감 (검증 → 누적 저장 → 보고자료 ZIP → 동기화) ──
+// ── 오늘 마감 (검증 → 누적 저장 → 보고자료 ZIP ∥ 동기화) ──
 // 각 단계는 기존 버튼들이 하던 일과 동일하다. 순서를 기억하지 않아도 되게 묶었을 뿐이다.
-// ZIP이 동기화보다 앞에 오는 이유: 동기화는 네트워크라 느린데 사람이 원하는 산출물은
-// ZIP이다. 파일을 먼저 쥐여주면 동기화가 끝날 때까지 화면 앞에 앉아 있을 이유가 없다.
+// ZIP과 동기화는 동시에 돈다. 동기화는 네트워크라 느린데 사람이 원하는 산출물은 ZIP이다.
+// ZIP이 먼저 떨어지면 동기화가 끝날 때까지 화면 앞에 앉아 있을 이유가 없다.
 async function closeDay() {
   if (!lastGroupedMain && !lastGroupedTalkis) { alert('먼저 데이터를 업로드해주세요.'); return; }
   // 손으로 마감했으니 예약돼 있던 자동 동기화는 취소
@@ -5474,30 +5484,46 @@ async function closeDay() {
 
     // 2) 누적 저장 (빠진 날짜 보충 포함)
     step('누적 저장 중...');
+    console.time('[closeDay] 누적 저장');
     await ensureAccBuilt();
     refreshAccDisplay();
+    console.timeEnd('[closeDay] 누적 저장');
 
-    // 3) 보고자료 ZIP — 진행 표시는 마감 버튼이 이어받는다.
-    //    ZIP에서 실패하더라도 동기화는 계속한다(검증을 통과한 데이터는 공유되어야 한다).
-    let res = null;
-    try {
-      res = await downloadAll({ onStep: step });
-      if (res) notes.push(`ZIP ${res.count}개 파일`);
-    } catch (e) {
-      notes.push('ZIP 실패');
-      console.warn('[closeDay] zip:', e);
-    }
-
-    // 4) GitHub 동기화 — 파일은 이미 저장됐으니 여기서부터는 지켜보지 않아도 된다
-    step(res ? '파일 저장됨 · 동기화 중...' : '동기화 중...');
-    if (res) showStatus('보고자료는 저장됐습니다 — 남은 동기화는 기다리지 않으셔도 됩니다.', 'success');
-    try {
-      await syncToGitHub(true);
-      notes.push('동기화 완료');
-    } catch (e) {
-      if (e && e.code === 'TOKEN_CANCELED') notes.push('동기화 취소됨');
-      else { notes.push('동기화 실패'); console.warn('[closeDay] sync:', e); }
-    }
+    // 3) 보고자료 ZIP + 4) GitHub 동기화 — 동시에 시작한다.
+    //    예전에 '전체 다운로드' 누르고 바로 '동기화' 누르던 것과 같다. 동기화는 네트워크 대기가
+    //    대부분이라 ZIP 생성과 겹쳐도 되고, 누적 저장은 위에서 끝났으니 둘 다 같은 데이터를 쓴다.
+    //    한쪽이 실패해도 다른 쪽은 계속한다.
+    let zipDone = false, syncDone = false;
+    const zipJob = (async () => {
+      console.time('[closeDay] ZIP');
+      try {
+        const res = await downloadAll({ onStep: (msg) => { if (!zipDone) step(msg); }, skipAcc: true });
+        if (res) showStatus('보고자료는 저장됐습니다 — 남은 동기화는 기다리지 않으셔도 됩니다.', 'success');
+        return res ? `ZIP ${res.count}개 파일` : 'ZIP 실패';
+      } catch (e) {
+        console.warn('[closeDay] zip:', e);
+        return 'ZIP 실패';
+      } finally {
+        zipDone = true;
+        console.timeEnd('[closeDay] ZIP');
+        if (!syncDone) step('파일 저장됨 · 동기화 중...');
+      }
+    })();
+    const syncJob = (async () => {
+      console.time('[closeDay] 동기화');
+      try {
+        await syncToGitHub(true);
+        return '동기화 완료';
+      } catch (e) {
+        if (e && e.code === 'TOKEN_CANCELED') return '동기화 취소됨';
+        console.warn('[closeDay] sync:', e);
+        return '동기화 실패';
+      } finally {
+        syncDone = true;
+        console.timeEnd('[closeDay] 동기화');
+      }
+    })();
+    notes.push(...await Promise.all([zipJob, syncJob]));
 
     step('완료!');
     showStatus('오늘 마감 완료 — ' + notes.join(' · '), 'success');
