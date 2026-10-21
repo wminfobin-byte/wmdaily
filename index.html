@@ -1323,8 +1323,13 @@ function resetProgress(barId) {
   if (label) { label.innerHTML = ''; }
 }
 
-function readExcel(file, callback, progressBarId) {
+function readExcel(file, callback, progressBarId, onError) {
   const reader = new FileReader();
+  reader.onerror = () => {
+    showStatus(`파일 읽기 오류: ${file.name}`, 'error');
+    if (progressBarId) resetProgress(progressBarId);
+    if (onError) onError();
+  };
   if (progressBarId) {
     setProgress(progressBarId, 0, false);
     reader.onprogress = e => {
@@ -1344,6 +1349,7 @@ function readExcel(file, callback, progressBarId) {
     } catch (err) {
       showStatus(`파일 읽기 오류: ${err.message}`, 'error');
       if (progressBarId) resetProgress(progressBarId);
+      if (onError) onError();
     }
   };
   reader.readAsArrayBuffer(file);
@@ -2125,6 +2131,7 @@ async function processRawFile(type, name, arrayBuffer, opts) {
 
 async function pollRawFolder() {
   if (rawPollInflight) return;
+  let ctHold = false;   // 계약 파일을 읽었으면 대시보드 재빌드까지 끝난 뒤 잠금 해제
   if (!rawState.rootHandle || rawState.permission !== 'granted') return;
   if (document.hidden) return;
   rawPollInflight = true;
@@ -2159,6 +2166,7 @@ async function pollRawFolder() {
       if (!isInitial) {
         for (const item of newOrChanged) {
           try {
+            if (type === 'contract' && !ctHold) { beginContractLoad(item.name); ctHold = true; }
             const buf = await item.file.arrayBuffer();
             const ok = await processRawFile(type, item.name, buf);
             // 실제 처리한 파일만 반영 기록에 남긴다 (감지 기록과 분리)
@@ -2192,6 +2200,7 @@ async function pollRawFolder() {
     console.warn('[RAW poll] 오류:', err);
   } finally {
     rawPollInflight = false;
+    if (ctHold) endContractLoad();
   }
 }
 
@@ -2605,6 +2614,15 @@ async function forceReadRawType(type) {
   // 사용자가 직접 [지금 반영]을 눌렀으므로 감지/반영 기록과 무관하게 항상 실제 반영한다.
   // accumulateDbData(키 기준 중복 제거)·명단/계약(월 단위 덮어쓰기) 모두 멱등이라 재처리해도 안전.
 
+  if (type === 'contract') {
+    beginContractLoad(info.name);
+    try { return await _forceReadRawTypeInner(type, label, info); }
+    finally { endContractLoad(); }
+  }
+  return _forceReadRawTypeInner(type, label, info);
+}
+
+async function _forceReadRawTypeInner(type, label, info) {
   let buf;
   try { buf = await info.file.arrayBuffer(); }
   catch (err) { showStatus(`${label} 파일 읽기 실패: ${err.message}`, 'error'); return false; }
@@ -2658,6 +2676,14 @@ async function _scanAllRawTypes() {
 // - 오래된 파일부터 처리 (DB수 누적 순서를 보존)
 // - 성공한 파일만 반영/기준선 기록 → 실패한 파일은 다음에 다시 시도된다
 async function _reflectRawTargets(targets, statusEl) {
+  const hasContract = !!(targets.contract && targets.contract.length);
+  if (!hasContract) return _reflectRawTargetsInner(targets, statusEl);
+  beginContractLoad(targets.contract[targets.contract.length - 1].name);
+  try { return await _reflectRawTargetsInner(targets, statusEl); }
+  finally { endContractLoad(); }
+}
+
+async function _reflectRawTargetsInner(targets, statusEl) {
   const prevLatest = globalLatestDate;
   let touched = 0;      // 실제로 IDB 내용이 바뀐 파일 수
   let processed = 0;    // 읽어서 처리한 파일 수
@@ -3622,7 +3648,9 @@ document.getElementById('fileContract').addEventListener('change', e => {
   if (!file) return;
   const monthKey = extractMonthKey(file.name);
   if (!confirmMonthKey(monthKey, file.name)) { e.target.value = ''; return; }
+  beginContractLoad(file.name);
   readExcel(file, async (data, arrayBuffer) => {
+   try {
     contractByMonth[monthKey] = data;
     await saveContractToDB();
     await saveFileMeta('contract', `${file.name} (${monthKey})`, data.length);
@@ -3639,7 +3667,10 @@ document.getElementById('fileContract').addEventListener('change', e => {
     fileJustUploaded = true;
     lastUploadType = 'contract';
     await tryBuildTab4();
-  }, 'progressContract');
+   } finally {
+    endContractLoad();
+   }
+  }, 'progressContract', endContractLoad);
 });
 
 // ══════════════════════════════════════════════
@@ -4619,6 +4650,8 @@ async function tryBuildTab4() {
     try { autoSaveAccForDate(latestDate, groupedMain, groupedTalkis); } catch(e) { console.warn('autoSaveAcc:', e); }
   }
 
+  // 계약 파일이 당일을 따라왔는지에 따라 검증·마감 버튼 잠금 갱신
+  try { _applyContractLock(); } catch(e) { console.warn('contractLock:', e); }
   // 일일성과 파일이 대시보드보다 먼저 들어와 있었다면, 빌드가 끝난 지금 자동 검증한다.
   try { maybeAutoVerify(); } catch(e) { console.warn('maybeAutoVerify:', e); }
   try { renderTodayReadyBar(); } catch(e) { console.warn('todayReadyBar:', e); }
@@ -4747,6 +4780,7 @@ async function downloadAll(opts) {
   const btn = document.getElementById('btnDownloadAll');
   const dlIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   const external = typeof opts.onStep === 'function';
+  if (!external && blockedByContractLoad('다운로드')) return;
   const origDlHTML = btn ? btn.innerHTML : '';
   const step = (msg) => {
     if (external) opts.onStep(msg);
@@ -5444,6 +5478,7 @@ function scheduleIdleAutoSync() {
 // ZIP이 먼저 떨어지면 동기화가 끝날 때까지 화면 앞에 앉아 있을 이유가 없다.
 async function closeDay() {
   if (!lastGroupedMain && !lastGroupedTalkis) { alert('먼저 데이터를 업로드해주세요.'); return; }
+  if (blockedByContractLoad('오늘 마감')) return;
   // 손으로 마감했으니 예약돼 있던 자동 동기화는 취소
   if (idleSyncTimer) { clearTimeout(idleSyncTimer); idleSyncTimer = null; }
 
@@ -5658,6 +5693,102 @@ function _verifyIsExcluded(name) {
   return VERIFY_EXCLUDE_PREFIXES.some(p => name.startsWith(p));
 }
 
+// ── 계약수 파일 읽는 중 잠금 ──
+// 계약수(월간 누적) 파일은 커서 읽는 데 오래 걸린다. 그 사이 대시보드는 예전 계약 데이터로
+// 그려져 있으므로, 이때 검증·마감·다운로드를 하면 틀린 결과가 나온다.
+// 계약 파일을 읽기 시작해서 대시보드를 다시 그릴 때까지 잠근다. (동시에 여러 경로로 들어올 수 있어 카운터)
+let contractLoadCount = 0;
+let contractLoadName = '';
+
+function isContractLoading() { return contractLoadCount > 0; }
+
+function beginContractLoad(name) {
+  contractLoadCount++;
+  contractLoadName = name || '';
+  _applyContractLock();
+}
+
+function endContractLoad() {
+  if (contractLoadCount === 0) return;
+  contractLoadCount--;
+  _applyContractLock();
+  if (contractLoadCount === 0) {
+    // 잠금 중에 미뤄졌던 자동 검증을 지금 실행 (대시보드는 이미 새 계약으로 다시 그려진 상태)
+    try { maybeAutoVerify(); } catch (e) { console.warn('maybeAutoVerify:', e); }
+  }
+}
+
+// ── 계약수 파일이 대시보드 당일을 못 따라온 상태 ──
+// 당일 계약은 "신청일(P열) == 대시보드 당일(DB 최신 분배일)"인 행만 센다.
+// 그래서 새 DB 파일이 계약수 파일보다 먼저 반영되면 당일 계약이 전원 0으로 보인다.
+// 계약수 파일의 최신 신청일이 당일보다 앞이면 검증·마감·다운로드를 막는다.
+let _ctMaxCache = { ref: null, max: '' };
+function contractMaxAppDate() {
+  if (!contractData) return '';
+  if (_ctMaxCache.ref === contractData) return _ctMaxCache.max;
+  let max = '';
+  for (const r of contractData) {
+    const d = datePart(r[CT_COL.applicationDate]);
+    if (d > max) max = d;
+  }
+  _ctMaxCache = { ref: contractData, max };
+  return max;
+}
+// 뒤처졌으면 계약수 파일의 최신 신청일을, 아니면 null
+function contractBehindDashboard() {
+  if (!lastLatestDate || !contractData) return null;
+  const m = contractMaxAppDate();
+  return (m && m < lastLatestDate) ? m : null;
+}
+
+let _ctBehindWarnedKey = '';
+function _applyContractLock() {
+  const loading = isContractLoading();
+  const behind = loading ? null : contractBehindDashboard();
+  const locked = loading || !!behind;
+  const lockTitle = loading
+    ? '계약수 파일을 읽는 중입니다 — 끝나면 자동으로 풀립니다'
+    : `계약수 파일이 ${behind}까지만 있어 당일(${lastLatestDate}) 계약이 0으로 집계됩니다 — 최신 계약수 파일이 반영되면 풀립니다`;
+  const vBtn = document.getElementById('btnVerifyRun');
+  if (vBtn) {
+    vBtn.disabled = locked || !pendingVerify;
+    vBtn.title = locked ? lockTitle : '';
+  }
+  for (const id of ['btnCloseDay', 'btnDownloadAll']) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (b.dataset.origTitle === undefined) b.dataset.origTitle = b.title || '';
+    b.disabled = locked;
+    b.style.opacity = locked ? '0.5' : '';
+    b.title = locked ? lockTitle : b.dataset.origTitle;
+  }
+  if (loading) {
+    showStatus(`계약수 파일 읽는 중${contractLoadName ? ` (${contractLoadName})` : ''} — 끝날 때까지 검증·마감·다운로드가 잠깁니다.`, 'warn');
+  } else if (behind) {
+    const key = `${behind}|${lastLatestDate}`;
+    if (_ctBehindWarnedKey !== key) {
+      _ctBehindWarnedKey = key;
+      showStatus(`계약수 파일이 ${behind}까지만 있어 당일(${lastLatestDate}) 계약이 0으로 보입니다 — 최신 계약수 파일을 반영해주세요. (검증·마감·다운로드 잠금)`, 'warn');
+    }
+  } else {
+    _ctBehindWarnedKey = '';
+  }
+}
+
+// 잠금 중이면 알림 후 true. 수동 실행 함수 맨 앞에서 호출.
+function blockedByContractLoad(actionLabel, silent) {
+  if (isContractLoading()) {
+    if (!silent) alert(`계약수 파일을 아직 읽는 중입니다.\n읽기가 끝나고 대시보드가 다시 그려진 뒤에 ${actionLabel}해주세요.`);
+    return true;
+  }
+  const behind = contractBehindDashboard();
+  if (behind) {
+    if (!silent) alert(`계약수 파일이 ${behind} 신청분까지만 들어 있습니다.\n대시보드 당일(${lastLatestDate}) 계약이 전부 0으로 집계된 상태라 ${actionLabel}할 수 없습니다.\n\n최신 계약수(신청자관리 월간누적) 파일을 반영한 뒤 다시 시도해주세요.`);
+    return true;
+  }
+  return false;
+}
+
 // 업로드/폴더 감지된 일일성과 파일의 파싱 결과 보관 — [데이터 검증] 버튼이 사용
 let pendingVerify = null;  // { cmsByName, firstDate, fileName }
 
@@ -5688,7 +5819,7 @@ function _loadVerifyFromRows(rows, fileName, opts) {
   }
   pendingVerify = { cmsByName, firstDate, fileName };
   const btn = document.getElementById('btnVerifyRun');
-  if (btn) btn.disabled = false;
+  if (btn) btn.disabled = isContractLoading();
   return true;
 }
 
@@ -5719,6 +5850,7 @@ function handleVerifyFile(event) {
 function runVerify(opts) {
   opts = opts || {};
   const auto = !!opts.auto;
+  if (blockedByContractLoad('검증', auto)) return null;
   if (!pendingVerify) {
     if (!auto) alert('먼저 15-7 일일성과 파일을 업로드해주세요.');
     return null;
@@ -5790,6 +5922,8 @@ let _autoVerifyDoneKey = null;
 
 function maybeAutoVerify() {
   if (!pendingVerify) return;
+  if (isContractLoading()) return;                          // 계약 읽는 중 — 끝나면 endContractLoad가 다시 호출
+  if (contractBehindDashboard()) return;                    // 계약 파일이 당일분 미포함 — 새 계약 반영 후 빌드에서 다시 호출
   if (!lastGroupedMain || !lastLatestDate) return;          // 대시보드 미빌드 — 빌드 후 다시 호출됨
   // 파일의 날짜가 대시보드 최신일과 다르면 자동 비교하지 않는다 (수동 버튼은 그대로 사용 가능)
   if (pendingVerify.firstDate && pendingVerify.firstDate !== lastLatestDate) return;
