@@ -810,6 +810,10 @@ let bottomPinNames = new Set(JSON.parse(localStorage.getItem('bottomPinNames') |
 let lastGroupedMain = null;   // buildDashboard 결과 캐시
 let lastGroupedTalkis = null;
 let lastLatestDate = null;
+// 마지막 빌드가 저장된 스냅샷을 불러와 그린 화면인지. 이 화면은 다시 저장하면 안 된다 —
+// 저장 키(조회범위 마지막 DB일)와 화면 데이터(조회 종료일 스냅샷)가 어긋나 전날 스냅샷을
+// 다음날 값으로 덮어쓴 사고가 있었다. (9/11·10/5·10/15, 2026-10-21 확인)
+let lastBuildFromSnapshot = false;
 
 // 명단 제외 대상
 const ROSTER_EXCLUDE = new Set(['(R_송내)유현미', '(R_송내)허선정', '(R_송내)이영혜', '(R_송내)이미현']);
@@ -4046,6 +4050,7 @@ async function tryBuildTab4() {
   const acc = await loadAccumulated();
   const allDates = Object.keys(acc.dates).sort();
   globalLatestDate = allDates.length > 0 ? allDates[allDates.length - 1] : null;
+  try { repairShiftedSnapshots(acc, allDates); } catch (e) { console.warn('[snapRepair]', e); }
 
   if (allDates.length === 0) {
     document.getElementById('dashboardArea').classList.add('hidden');
@@ -4688,10 +4693,11 @@ async function tryBuildTab4() {
   // 누적 엑셀저장용 데이터 캐시
   lastGroupedMain = groupedMain;
   lastGroupedTalkis = groupedTalkis;
-  lastLatestDate = latestDate;
+  lastBuildFromSnapshot = !!useSnapshot;
+  lastLatestDate = useSnapshot ? _snapEnd : latestDate;   // 화면 데이터의 실제 날짜
 
-  // 방법2: 대시보드 빌드 시 최근 영업일 데이터 자동 저장
-  if (latestDate) {
+  // 방법2: 대시보드 빌드 시 최근 영업일 데이터 자동 저장 (스냅샷 화면은 저장하지 않음)
+  if (latestDate && !useSnapshot) {
     try { autoSaveAccForDate(latestDate, groupedMain, groupedTalkis); } catch(e) { console.warn('autoSaveAcc:', e); }
   }
 
@@ -4992,6 +4998,8 @@ function _accSnapshotDbTotal(data) {
 }
 
 function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
+  // 스냅샷을 불러와 그린 화면은 저장 대상이 아니다 (동기화·마감·ZIP 경로 포함)
+  if (lastBuildFromSnapshot) { console.log(`[acc] ${dateKey} 스냅샷 화면 — 저장 건너뜀`); return; }
   // 인원은 있는데 DB가 통째로 0인 스냅샷은 저장하지 않는다.
   // IDB의 dates 복원이 끝나기 전에 마감이 돌면 이런 화면이 찍히는데, 대시보드는 스냅샷을
   // 우선 사용하므로 한 번 저장되면 원본이 멀쩡해도 계속 0으로 보인다. (2026-09-09 사고)
@@ -5009,6 +5017,49 @@ function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
   save('main', groupedMain);
   save('talkis', groupedTalkis);
   refreshAccDisplay();
+}
+
+// 다른 날 값으로 덮어써진 스냅샷 복구.
+// 판정: 스냅샷의 사람별 당일DB가 그날 원본과 50% 미만 일치 + 다른 날 원본과 90% 이상 일치
+//   → 그날 기준으로 재생성 (buildSingleDateAcc: 그날 이후 반품은 미반영하는 박제 기준).
+// 같은 원문은 다시 검사하지 않는다.
+const _snapShiftChecked = new Map();
+function repairShiftedSnapshots(acc, allDates) {
+  const dateSet = new Set(allDates);
+  const toRebuild = new Map();   // date -> 닮은 날짜
+  for (const tab of ['main', 'talkis']) {
+    for (const dt of getAccSavedDates(tab)) {
+      if (!dateSet.has(dt)) continue;
+      const key = getAccStorageKey(tab, dt);
+      const raw = localStorage.getItem(key);
+      if (!raw || _snapShiftChecked.get(key) === raw) continue;
+      _snapShiftChecked.set(key, raw);
+      let data;
+      try { data = JSON.parse(raw); } catch (e) { continue; }
+      const ps = [];
+      for (const [g, arr] of Object.entries(data)) {
+        if (g.startsWith('_') || !Array.isArray(arr)) continue;
+        for (const p of arr) if ((p.todayDb || 0) > 0) ps.push(p);
+      }
+      if (ps.length < 5) continue;
+      const ratio = (d) => {
+        const pp = (acc.dates[d] && acc.dates[d].persons) || {};
+        let m = 0;
+        for (const p of ps) if (((pp[p.name] && pp[p.name].total) || 0) === p.todayDb) m++;
+        return m / ps.length;
+      };
+      if (ratio(dt) >= 0.5) continue;
+      const other = allDates.find(d => d !== dt && ratio(d) >= 0.9);
+      if (other) toRebuild.set(dt, other);
+    }
+  }
+  for (const [dt, other] of toRebuild) {
+    try {
+      buildSingleDateAcc(dt, acc, allDates);
+      console.warn(`[snapRepair] ${dt} 스냅샷이 ${other} 값으로 덮어써져 있어 ${dt} 기준으로 재생성`);
+    } catch (e) { console.warn('[snapRepair] 재생성 실패', dt, e); }
+  }
+  return [...toRebuild.keys()];
 }
 
 // 방법1: 동기화 시 모든 날짜 자동 빌드 (빠진 날짜 보충)
@@ -5667,7 +5718,7 @@ async function saveAccAll() {
 // 개별 탭 누적저장 (내부용)
 function saveAccExcelLocal(tab) {
   const grouped = tab === 'main' ? lastGroupedMain : lastGroupedTalkis;
-  if (!grouped) return;
+  if (!grouped || lastBuildFromSnapshot) return;
   const dateKey = lastLatestDate || new Date().toISOString().slice(0, 10);
   const data = serializeGrouped(grouped);
   data._dateLabel = dateKey;
