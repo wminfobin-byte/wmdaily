@@ -743,9 +743,9 @@
       </div>
       <div class="kpi-row-label" id="kpiFilteredLabel">조회 기간</div>
       <div class="kpi-row">
-        <div class="kpi-card kpi-db"><div class="kpi-label" title="분배일 기준 분배된 DB 수 (IN 포함)&#10;제외: 고객키 중복 · OB명 빈값 · 군자/관리자 · 분배일 빈값 · 재콜">📋 DB수</div><div class="kpi-value" id="kpiFDb">0</div></div>
-        <div class="kpi-card kpi-daily"><div class="kpi-label" title="분배 당일 계약(분배일=신청일) 건수 (IN 포함)&#10;제외: 담당자 빈값 · 그날 마감 시점 반품(반품일≤신청일)">⚡ 일계약수</div><div class="kpi-value" id="kpiFDaily">0</div></div>
-        <div class="kpi-card kpi-actual"><div class="kpi-label" title="신청일 기준 체결 계약 건수 (IN 포함)&#10;제외: 담당자 빈값 · 그날 마감 시점 반품(반품일≤신청일)&#10;※ 이후 발생한 반품은 포함(당일 블록 박제 기준)">✅ 실계약수</div><div class="kpi-value" id="kpiFActual">0</div></div>
+        <div class="kpi-card kpi-db"><div class="kpi-label" title="날짜별 당일 스냅샷(그날 보고 숫자)의 DB수 합계 (IN 포함)&#10;스냅샷 없는 날·최신 영업일은 실시간 계산">📋 DB수</div><div class="kpi-value" id="kpiFDb">0</div></div>
+        <div class="kpi-card kpi-daily"><div class="kpi-label" title="날짜별 당일 스냅샷(그날 보고 숫자)의 일계약수 합계 (IN 포함)&#10;스냅샷 없는 날·최신 영업일은 실시간 계산(반품일≤신청일만 제외)">⚡ 일계약수</div><div class="kpi-value" id="kpiFDaily">0</div></div>
+        <div class="kpi-card kpi-actual"><div class="kpi-label" title="날짜별 당일 스냅샷(그날 보고 숫자)의 실계약수 합계 (IN 포함)&#10;이후 발생한 반품은 반영하지 않음&#10;스냅샷 없는 날·최신 영업일은 실시간 계산(반품일≤신청일만 제외)">✅ 실계약수</div><div class="kpi-value" id="kpiFActual">0</div></div>
         <div class="kpi-card kpi-rate"><div class="kpi-label" title="실계약수 ÷ DB수 (조회기간 총합 기준 재계산)">📈 실계약률</div><div class="kpi-value" id="kpiFRate">-</div></div>
       </div>
       <div class="kpi-row-label" id="kpiGlobalLabel">최근 영업일</div>
@@ -4378,17 +4378,26 @@ async function tryBuildTab4() {
   });
 
   // ── KPI 1행: 조회 기간 기준 (필터 적용) ──
-  // DB수 = 조회기간 분배 DB 누적 (cumDbAll, 취소 개념 없음 — 날짜별 당일 DB 합계와 동일)
-  function calcFilteredDb(gMap) {
-    let db = 0;
-    for (const [, persons] of gMap) { for (const p of persons) db += p.cumDbAll; }
-    return db;
+  // 원칙: 날짜별 '당일' 스냅샷(그날 보고한 숫자)의 합계.
+  //   - 스냅샷이 있는 날: 스냅샷의 todayDb / todayDailyContract / todayActualContract 합산 (지금 시점 재계산 X)
+  //   - 스냅샷이 없는 날 · 최신 영업일: 라이브 계산 (반품일 ≤ 신청일만 취소로 보는 박제 기준)
+  const mainNames = new Set(), talkisNames = new Set();
+  for (const [, persons] of groupedMain) for (const p of persons) mainNames.add(p.name);
+  for (const [, persons] of groupedTalkis) for (const p of persons) talkisNames.add(p.name);
+
+  // 라이브 계산값 (날짜별) — 스냅샷 없는 날의 대체값
+  const mkDay = () => ({ main: { db: 0, daily: 0, actual: 0 }, talkis: { db: 0, daily: 0, actual: 0 } });
+  const liveByDate = new Map();
+  const liveDay = (d) => { if (!liveByDate.has(d)) liveByDate.set(d, mkDay()); return liveByDate.get(d); };
+  for (const date of accDates) {
+    const dayData = acc.dates[date];
+    if (!dayData || !dayData.persons) continue;
+    const ld = liveDay(date);
+    for (const [name, counts] of Object.entries(dayData.persons)) {
+      if (mainNames.has(name)) ld.main.db += counts.total || 0;
+      else if (talkisNames.has(name)) ld.talkis.db += counts.total || 0;
+    }
   }
-  // 실계약수·일계약수 = 날짜별 '당일' 블록의 박제 합계와 동일 기준.
-  //   ★취소 판정: 반품일 <= 신청일(=그날 마감 시점)일 때만 제외. 그 이후 발생한 반품은 포함(당일 블록 박제와 동일).
-  //   담당자 정규화·visible 판정은 라이브 빌드(표)와 동일 규칙 사용.
-  let filtActualMain = 0, filtActualTalkis = 0;
-  let filtDailyMain = 0, filtDailyTalkis = 0;
   contractData.forEach(ctRow => {
     const manager = String(ctRow[CT_COL.manager] || '').trim();
     if (!manager) return;
@@ -4418,9 +4427,8 @@ async function tryBuildTab4() {
     }
     if (!isPersonVisible(canonicalName)) return;
     const pi = activeRoster.get(canonicalName);
-    const isTalkis = !!(pi && talkisGroups.includes(pi.group));
-    // 실계약 (IN 포함)
-    if (isTalkis) filtActualTalkis++; else filtActualMain++;
+    const bucket = liveDay(appDateStr)[(pi && talkisGroups.includes(pi.group)) ? 'talkis' : 'main'];
+    bucket.actual++; // 실계약 (IN 포함)
     // 일계약 = 당일계약 (분배일 == 신청일)
     let is일계약;
     if (meta) {
@@ -4429,10 +4437,47 @@ async function tryBuildTab4() {
       const dbDateStr = datePart(ctRow[CT_COL.dbDate]);
       is일계약 = !!(dbDateStr && appDateStr && dbDateStr === appDateStr);
     }
-    if (is일계약) { if (isTalkis) filtDailyTalkis++; else filtDailyMain++; }
+    if (is일계약) bucket.daily++;
   });
-  const filtMain = { db: calcFilteredDb(groupedMain), actual: filtActualMain, daily: filtDailyMain };
-  const filtTalkis = { db: calcFilteredDb(groupedTalkis), actual: filtActualTalkis, daily: filtDailyTalkis };
+
+  // 스냅샷 값 (날짜별) — 현재 필터(인원/그룹/센터/팀)를 스냅샷 당시 소속 기준으로 적용
+  const snapPersonVisible = (p) => {
+    if (filters.persons && !filters.persons.has(p.name)) return false;
+    if (filters.groups && !filters.groups.has(p.group)) return false;
+    if (filters.centers && !filters.centers.has(p.center)) return false;
+    if (filters.teams && !filters.teams.has(p.team)) return false;
+    return true;
+  };
+  const sumSnapshot = (raw) => {
+    const out = { db: 0, daily: 0, actual: 0 };
+    const data = JSON.parse(raw);
+    for (const [key, arr] of Object.entries(data)) {
+      if (key.startsWith('_') || !Array.isArray(arr)) continue;
+      for (const p of arr) {
+        if (!snapPersonVisible(p)) continue;
+        out.db += p.todayDb || 0;
+        out.daily += p.todayDailyContract || 0;
+        out.actual += p.todayActualContract || 0;
+      }
+    }
+    return out;
+  };
+  const filtMain = { db: 0, daily: 0, actual: 0 };
+  const filtTalkis = { db: 0, daily: 0, actual: 0 };
+  const addTo = (t, v) => { t.db += v.db; t.daily += v.daily; t.actual += v.actual; };
+  const kpiDates = new Set([...accDates, ...liveByDate.keys()]);
+  for (const date of kpiDates) {
+    let snapM = null, snapT = null;
+    if (date !== globalLatestDate) {
+      try {
+        const rawM = localStorage.getItem(getAccStorageKey('main', date));
+        const rawT = localStorage.getItem(getAccStorageKey('talkis', date));
+        if (rawM && rawT) { snapM = sumSnapshot(rawM); snapT = sumSnapshot(rawT); }
+      } catch (e) { snapM = snapT = null; }
+    }
+    if (snapM && snapT) { addTo(filtMain, snapM); addTo(filtTalkis, snapT); }
+    else { const ld = liveByDate.get(date) || mkDay(); addTo(filtMain, ld.main); addTo(filtTalkis, ld.talkis); }
+  }
 
   // ── KPI 2행: 전영업일 데이터 (날짜 필터 무관) ──
   const kpiPersonDb = new Map();
