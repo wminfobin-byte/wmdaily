@@ -27,10 +27,6 @@
   .btn-upload-open:hover { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.3); box-shadow: 0 4px 12px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.1); transform: translateY(-1px); }
   .btn-upload-open svg { flex-shrink: 0; opacity: 0.85; }
   .btn-upload-open { display: inline-flex; align-items: center; gap: 6px; }
-  .btn-download-all { border-color: rgba(59,130,246,0.4); background: rgba(59,130,246,0.12); }
-  .btn-download-all:hover { background: rgba(59,130,246,0.25); border-color: rgba(59,130,246,0.6); }
-  .btn-sync { border-color: rgba(52,168,83,0.4); background: rgba(52,168,83,0.12); }
-  .btn-sync:hover { background: rgba(52,168,83,0.25); border-color: rgba(52,168,83,0.6); }
   .btn-admin { border-color: rgba(255,255,255,0.25); }
   .btn-upload { border-color: rgba(251,191,36,0.4); background: rgba(251,191,36,0.12); }
   .btn-upload:hover { background: rgba(251,191,36,0.25); border-color: rgba(251,191,36,0.6); }
@@ -461,17 +457,9 @@
   </div>
   <div class="header-right">
     <span id="syncTime" style="font-size:11px;opacity:0.5;display:none;letter-spacing:0.2px;"></span>
-    <button class="btn-upload-open btn-close-day" id="btnCloseDay" style="display:none;" onclick="closeDay()" title="검증 → 누적 저장 → 보고자료 ZIP 다운로드 → 동기화까지 한 번에 실행합니다 (파일이 먼저 저장되므로 동기화는 기다리지 않아도 됩니다)">
+    <button class="btn-upload-open btn-close-day" id="btnCloseDay" style="display:none;" onclick="closeDay()" title="검증 → 누적 저장 → 보고자료 ZIP 다운로드 → 공유 데이터 동기화까지 한 번에 실행합니다. 공유 데이터는 이 버튼으로만 갱신됩니다.">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
       <span class="btn-label-text">오늘 마감</span>
-    </button>
-    <button class="btn-upload-open btn-download-all" id="btnDownloadAll" style="display:none;" onclick="downloadAll()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      <span class="btn-label-text">전체 다운로드</span>
-    </button>
-    <button class="btn-upload-open btn-sync" id="btnAccSave" style="display:none;" onclick="saveAccAll()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-      <span class="btn-label-text">동기화</span>
     </button>
     <button class="btn-upload-open btn-admin" id="btnAdmin" onclick="openModal()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -569,9 +557,7 @@
         <span id="rawDirStatus" style="font-size:12px;">미연결</span>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-        <button id="btnRawRefresh" onclick="refreshRawStatusManual()" style="display:none;" title="30초 폴링을 기다리지 않고 지금 폴더를 다시 읽어 각 박스의 RAW 현황을 갱신합니다">🔄 폴더 다시 읽기</button>
         <button id="btnRawReadNew" onclick="forceReadNewRaw()" style="display:none;" title="폴더에 새로 들어왔거나 수정된 파일만 읽어 반영합니다 (평소에는 이걸 쓰세요 · 빠름)">⤵ 새 파일 반영</button>
-        <button id="btnRawReadAll" onclick="forceReadAllRaw()" style="display:none;" title="반영 기록이 없는 파일을 전부 다시 읽어 반영합니다 (확인용 · 파일이 많으면 오래 걸림)">⤵ 전체 다시 반영</button>
         <button id="btnRawConnect" onclick="onClickRawConnect()">RAW 폴더 연결</button>
         <button id="btnRawMigrate" onclick="migrateArchiveToRaw()" disabled title="IDB에 저장된 DB수 파일을 RAW 폴더로 일괄 백업">기존 파일 백업</button>
         <button id="btnRawDisconnect" class="danger" onclick="disconnectRawDir()" style="display:none;">연결 해제</button>
@@ -1023,8 +1009,6 @@ function applyAuthUI() {
   adminBtn.classList.remove('btn-admin');
   adminBtn.classList.add('btn-upload');
   document.getElementById('btnCloseDay').style.display = '';
-  document.getElementById('btnDownloadAll').style.display = '';
-  document.getElementById('btnAccSave').style.display = '';
   document.getElementById('btnLogout').style.display = '';
   restoreSyncTime();
   // RAW 폴더 연결 UI는 로그인 이후 + 핸들 복원 후 표시
@@ -1047,8 +1031,6 @@ function authLogout() {
   adminBtn.classList.remove('btn-upload');
   adminBtn.classList.add('btn-admin');
   document.getElementById('btnCloseDay').style.display = 'none';
-  document.getElementById('btnDownloadAll').style.display = 'none';
-  document.getElementById('btnAccSave').style.display = 'none';
   document.getElementById('btnLogout').style.display = 'none';
   document.getElementById('syncTime').style.display = 'none';
   // 열람자 모드로 돌아가면 RAW 폴더 UI 즉시 숨김 + RAW 폴링 정지 + 열람자 fetch 재개
@@ -2190,13 +2172,8 @@ async function pollRawFolder() {
       fileJustUploaded = true;
       try { await tryBuildTab4(); } catch {}
       await _ensureFilterCoversLatest(prevLatest);
-      // GitHub 갱신 (관리자만 가능 — 토큰 있으면)
-      if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
-        try { await syncToGitHub(true, { auto: true }); } catch (e) { if (!e || e.code !== 'NON_PROD_SKIPPED') console.warn('[RAW poll] GitHub sync 실패:', e); }
-      }
-      // 슬롯/오늘 재료 바 갱신 + 마감 자동 동기화 예약 (파일이 들어온 직후에만 수행)
+      // 공유 데이터(GitHub)는 여기서 올리지 않는다 — 검증을 거치는 [오늘 마감]에서만 동기화
       try { await refreshRawStatus(); } catch (e) { console.warn('[RAW poll] 현황 갱신 실패:', e); }
-      scheduleIdleAutoSync();
       flashReadyBar(`자동 반영 · ${pickedCount}개`, 'ok');
       showStatus(`RAW 폴더에서 ${pickedCount}개 파일 반영됨`, 'success');
     }
@@ -2283,14 +2260,10 @@ function updateRawDirUI() {
   const btnConnect = document.getElementById('btnRawConnect');
   const btnDisconnect = document.getElementById('btnRawDisconnect');
   const btnMigrate = document.getElementById('btnRawMigrate');
-  const btnRefresh = document.getElementById('btnRawRefresh');
   const btnReadNew = document.getElementById('btnRawReadNew');
-  const btnReadAll = document.getElementById('btnRawReadAll');
   if (!row) return;
   // 박스별 RAW 슬롯/전역 버튼은 권한 부여된 연결 상태에서만 노출 (아래 granted 분기에서 다시 켬)
-  if (btnRefresh) btnRefresh.style.display = 'none';
   if (btnReadNew) btnReadNew.style.display = 'none';
-  if (btnReadAll) btnReadAll.style.display = 'none';
   clearRawSlots();
   // 연결/권한이 없으면 오늘 재료 바도 숨긴다 (granted 분기의 refreshRawStatus가 다시 그림)
   rawLatestByType = {};
@@ -2316,9 +2289,7 @@ function updateRawDirUI() {
     if (btnConnect) { btnConnect.textContent = '폴더 변경'; btnConnect.disabled = false; }
     if (btnDisconnect) btnDisconnect.style.display = '';
     if (btnMigrate) btnMigrate.disabled = false;
-    if (btnRefresh) btnRefresh.style.display = '';
     if (btnReadNew) btnReadNew.style.display = '';
-    if (btnReadAll) btnReadAll.style.display = '';
     refreshRawStatus();
   } else {
     statusEl.innerHTML = `<span style="color:#ef6c00;">● 권한 필요</span> <span style="color:#666;">${name}</span>`;
@@ -2412,8 +2383,7 @@ function _renderRawSlot(type, info) {
     const tail = counts.length ? ` · ${counts.join(' · ')}` : '';
     detail = `<span class="raw-name" title="${info.name}">${info.name}</span>${more} · <span class="raw-when">${when}</span> · ${badge}${tail}`;
   }
-  slot.innerHTML = `<span class="raw-tag">RAW</span>${detail}`
-    + `<button onclick="forceReadRawType('${type}')" title="이 폴더의 최신 파일을 즉시 반영">↻ 지금 반영</button>`;
+  slot.innerHTML = `<span class="raw-tag">RAW</span>${detail}`;
   slot.classList.add('show');
 }
 
@@ -2527,7 +2497,6 @@ function renderTodayReadyBar() {
     + '<span class="trb-sep">·</span>' + parts.join('<span class="trb-sep">·</span>')
     + tail
     + '<span class="trb-spacer"></span>'
-    + `<button id="trbBtnRefresh"${dis} onclick="refreshRawStatusManual()" title="RAW 폴더를 다시 읽어 현황을 갱신합니다">🔄 다시 읽기</button>`
     + `<button id="trbBtnNew"${dis} onclick="forceReadNewRaw()" title="새로 들어왔거나 수정된 파일만 읽어 반영합니다">⤵ 새 파일 반영</button>`;
   bar.classList.add('show');
 }
@@ -2553,33 +2522,6 @@ async function refreshRawStatus() {
   renderTodayReadyBar();
 }
 
-// [🔄 다시 읽기] 버튼용. refreshRawStatus()는 30초 폴링도 쓰기 때문에 조용해야 하고,
-// 버튼으로 눌렀을 때만 진행 표시 + 결과 안내를 붙인다.
-async function refreshRawStatusManual() {
-  if (!rawState.rootHandle || rawState.permission !== 'granted') {
-    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
-    return;
-  }
-  setRawBusy('폴더 다시 읽는 중…');
-  try {
-    await refreshRawStatus();
-  } catch (err) {
-    clearRawBusy(); renderTodayReadyBar();
-    showStatus(`폴더 읽기 실패: ${err.message}`, 'error');
-    return;
-  }
-  clearRawBusy();
-  let fresh = 0, unrefl = 0;
-  for (const m of RAW_TYPE_META) {
-    const i = rawLatestByType[m.type];
-    if (i) { fresh += i.fresh || 0; unrefl += i.unreflected || 0; }
-  }
-  const hm = new Date().toTimeString().slice(0, 5);
-  flashReadyBar(fresh > 0 ? `현황 갱신 · 새 파일 ${fresh}개` : '현황 갱신 · 새 파일 없음', fresh > 0 ? 'warn' : 'ok');
-  showStatus(`${hm} 폴더를 다시 읽었습니다 — 새 파일 ${fresh}개 · 미반영 ${unrefl}개`
-    + (fresh > 0 ? ' · [⤵ 새 파일 반영]을 눌러 반영하세요' : ''), fresh > 0 ? 'warn' : 'success');
-}
-
 // 기록맵(name → {size,mtime})에 이 파일이 그대로 들어있는지. 파일이 많을 때
 // localStorage를 파일마다 다시 파싱하지 않도록, 맵을 한 번만 꺼내 쓰는 용도.
 function _rawMetaHit(map, f) {
@@ -2600,61 +2542,6 @@ function _rawSlotInfo(type, files) {
     if (!_rawMetaHit(refl, f)) unreflected++;
   }
   return { name: latest.name, file: latest.file, mtime: latest.mtime, count: files.length, fresh, unreflected };
-}
-
-// 한 type의 최신 파일을 즉시 읽어 IDB에 반영 (수동 리딩). 30초 폴링을 기다리지 않음.
-async function forceReadRawType(type) {
-  if (!rawState.rootHandle || rawState.permission !== 'granted') {
-    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
-    return false;
-  }
-  const m = RAW_TYPE_META.find(x => x.type === type);
-  const label = m ? m.label : type;
-  const info = await scanRawLatest(type);
-  if (!info || !info.name) {
-    showStatus(`${label}: 폴더에 파일이 없습니다.`, 'warn');
-    return false;
-  }
-  // 사용자가 직접 [지금 반영]을 눌렀으므로 감지/반영 기록과 무관하게 항상 실제 반영한다.
-  // accumulateDbData(키 기준 중복 제거)·명단/계약(월 단위 덮어쓰기) 모두 멱등이라 재처리해도 안전.
-
-  if (type === 'contract') {
-    beginContractLoad(info.name);
-    try { return await _forceReadRawTypeInner(type, label, info); }
-    finally { endContractLoad(); }
-  }
-  return _forceReadRawTypeInner(type, label, info);
-}
-
-async function _forceReadRawTypeInner(type, label, info) {
-  let buf;
-  try { buf = await info.file.arrayBuffer(); }
-  catch (err) { showStatus(`${label} 파일 읽기 실패: ${err.message}`, 'error'); return false; }
-
-  const prevLatest = globalLatestDate;
-  let ok;
-  try { ok = await processRawFile(type, info.name, buf); }
-  catch (err) { showStatus(`${label} 반영 실패: ${err.message}`, 'error'); console.warn('[forceRead] 처리 실패:', type, err); return false; }
-  // 폴링이 다시 잡지 않게 baseline 갱신
-  _markRawReflected(type, info.name, info.file);
-
-  if (type === 'verify') {
-    // verify는 IDB/GitHub 갱신 없이 [데이터 검증] 대기 상태로만 적재됨
-    showStatus(`${label}: ${info.name} 적재 완료 — [데이터 검증]을 눌러주세요.`, 'success');
-  } else if (ok) {
-    fileJustUploaded = true;
-    try { await tryBuildTab4(); } catch {}
-    await _ensureFilterCoversLatest(prevLatest);
-    if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
-      try { await syncToGitHub(true); } catch (e) { console.warn('[forceRead] GitHub sync 실패:', e); }
-    }
-    showStatus(`${label}: ${info.name} 반영 완료.${globalLatestDate ? ` (대시보드 당일: ${globalLatestDate})` : ''}`, 'success');
-  } else {
-    // db 멱등 처리 등 — 이미 반영된 경우
-    showStatus(`${label}: ${info.name} — 새로 반영할 내용이 없습니다 (이미 반영됨).`, 'success');
-  }
-  await refreshRawStatus();
-  return true;
 }
 
 // 반영 대상이 이 개수를 넘으면 "정말 다 읽을까요?"를 한 번 물어본다.
@@ -2729,15 +2616,12 @@ async function _reflectRawTargetsInner(targets, statusEl) {
     fileJustUploaded = true;
     try { await tryBuildTab4(); } catch (e) { console.warn('[RAW reflect] tryBuildTab4 실패:', e); }
     await _ensureFilterCoversLatest(prevLatest);
-    if (typeof getGhToken === 'function' && getGhToken() && typeof syncToGitHub === 'function') {
-      try { await syncToGitHub(true); } catch (e) { console.warn('[RAW reflect] GitHub sync 실패:', e); }
-    }
   }
   return { touched, processed, perType, failed };
 }
 
 function _rawBtnsDisabled(v) {
-  for (const id of ['btnRawReadNew', 'btnRawReadAll', 'btnRawRefresh', 'trbBtnRefresh', 'trbBtnNew']) {
+  for (const id of ['btnRawReadNew', 'trbBtnNew']) {
     const el = document.getElementById(id);
     if (el) el.disabled = v;
   }
@@ -2827,70 +2711,7 @@ async function forceReadNewRaw() {
       showStatus(`${n}개 파일을 기준선으로 기록했습니다. 이제부터 새로 들어오는 파일만 반영됩니다. (건너뛴 파일은 각 박스의 "미반영 N개"로 계속 확인할 수 있습니다)`, 'success');
       return;
     }
-    // 취소 → 전부 반영 (기존 [전체 반영]과 동일한 동작)
-    await forceReadAllRaw({ skipConfirm: true });
-    return;
-  }
-
-  let res;
-  try {
-    res = await _reflectRawTargets(targets, statusEl);
-  } finally {
-    clearRawBusy();
-    _restoreRawStatusLabel(statusEl);
-  }
-  await refreshRawStatus();
-  if (scan.failed.length) res.failed.push(...scan.failed);
-  _reportRawReflect(res, '새 파일 반영 완료');
-}
-
-// [전체 다시 반영] — 반영 기록이 없는 파일 전부 + 종류별 최신 파일(강제 재반영).
-// 기준선과 무관하게 훑으므로 "혹시 빠진 게 있나?" 확인할 때 쓴다. 파일이 많으면 느리다.
-async function forceReadAllRaw(opts) {
-  if (!rawState.rootHandle || rawState.permission !== 'granted') {
-    showStatus('먼저 RAW 폴더를 연결해주세요.', 'error');
-    return;
-  }
-  const skipConfirm = !!(opts && opts.skipConfirm === true);
-  const statusEl = document.getElementById('rawDirStatus');
-  setRawBusy('폴더 확인 중…');
-  if (statusEl) statusEl.textContent = '폴더 확인 중...';
-
-  let scan;
-  try { scan = await _scanAllRawTypes(); }
-  catch (err) {
-    clearRawBusy(); renderTodayReadyBar(); _restoreRawStatusLabel(statusEl);
-    showStatus(`폴더 확인 실패: ${err.message}`, 'error');
-    return;
-  }
-  _restoreRawStatusLabel(statusEl);
-
-  const reflState = _loadReflectedState();
-  const targets = {};
-  let total = 0;
-  for (const m of RAW_TYPE_META) {
-    const list = scan.files[m.type];
-    if (!list || list.length === 0) continue;
-    if (m.type === 'verify') { targets.verify = list; total += 1; continue; }
-    // 미반영 파일 전부 + 최신 파일(이미 반영됐어도 강제 재반영)
-    const refl = reflState[m.type] || {};
-    const latest = list[list.length - 1];
-    const pick = list.filter(f => !_rawMetaHit(refl, f));
-    if (!pick.some(t => t.name === latest.name)) pick.push(latest);
-    targets[m.type] = pick;
-    total += pick.length;
-  }
-
-  if (total === 0) {
-    clearRawBusy();
-    await refreshRawStatus();
-    flashReadyBar('반영할 파일 없음', 'warn');
-    showStatus('폴더에 반영할 파일이 없습니다.', 'warn');
-    return;
-  }
-  if (!skipConfirm && total >= RAW_BULK_CONFIRM_THRESHOLD) {
-    clearRawBusy(); renderTodayReadyBar();
-    if (!confirm(`파일 ${total}개를 전부 다시 읽습니다.\n개수가 많으면 수 분 걸릴 수 있습니다.\n\n계속할까요?`)) return;
+    // 취소 → 기록 없는 파일 전부 읽어 반영
     setRawBusy('반영 준비 중…');
   }
 
@@ -2903,7 +2724,7 @@ async function forceReadAllRaw(opts) {
   }
   await refreshRawStatus();
   if (scan.failed.length) res.failed.push(...scan.failed);
-  _reportRawReflect(res, '전체 반영 완료');
+  _reportRawReflect(res, '새 파일 반영 완료');
 }
 
 // 새 날짜 데이터가 들어왔는데 조회기간 종료일이 그보다 앞이면, 대시보드/데이터 검증이
@@ -4810,7 +4631,7 @@ function downloadPng(type) {
 }
 
 // 누적 엑셀이 "당일 1장짜리"로 나가지 않도록 산출물 생성 전에 빠진 날짜를 채운다.
-// autoSaveAccForDate()는 빌드된 당일만 저장하므로, 이것 없이는 [동기화]를 먼저 눌러야만
+// autoSaveAccForDate()는 빌드된 당일만 저장하므로, 이것 없이는 누적 저장을 먼저 해야만
 // 전체 시트가 들어간 엑셀이 나왔다. 이제 버튼 순서와 무관하게 항상 같은 결과가 나온다.
 async function ensureAccBuilt() {
   // lastLatestDate가 없으면(대시보드 미빌드·IDB 복원 중) 오늘 날짜로 빈 스냅샷을 만들지 않는다.
@@ -4824,28 +4645,12 @@ async function ensureAccBuilt() {
   catch (e) { console.warn('[ensureAcc] 누적 생성 실패:', e); return 0; }
 }
 
-// 보고용 산출물(PNG 3장 + 엑셀 2개)을 zip 1개로 묶어 내려받는다.
-// opts.onStep 이 있으면 진행 표시를 호출자에게 위임한다 (오늘 마감에서 사용).
-async function downloadAll(opts) {
-  opts = opts || {};
-  const btn = document.getElementById('btnDownloadAll');
-  const dlIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-  const external = typeof opts.onStep === 'function';
-  if (!external && blockedByContractLoad('다운로드')) return;
-  const origDlHTML = btn ? btn.innerHTML : '';
-  const step = (msg) => {
-    if (external) opts.onStep(msg);
-    else if (btn) btn.innerHTML = dlIcon + ' <span class="btn-label-text">' + msg + '</span>';
-  };
-  if (btn && !external) btn.disabled = true;
-
+// 보고용 산출물(PNG 3장 + 엑셀 2개)을 zip 1개로 묶어 내려받는다. [오늘 마감] 전용.
+// 누적 저장은 호출 전에 끝나 있어야 한다. step(msg)으로 진행 문구를 넘겨받는다.
+async function downloadAll(step) {
+  step = step || (() => {});
   const files = [];
   try {
-    // 오늘 마감은 직전 단계에서 이미 누적 저장을 했으므로 건너뛴다 (IDB 전체 읽기 중복 방지)
-    if (!opts.skipAcc) {
-      step('누적 정리 중...');
-      await ensureAccBuilt();
-    }
 
     for (const [type, label] of [['eng', '영어'], ['lang', '제2외국어'], ['talkis', '톡이즈']]) {
       step(`PNG(${label}) 생성...`);
@@ -4874,11 +4679,9 @@ async function downloadAll(opts) {
     showStatus(`${zipName} 다운로드 완료 (파일 ${files.length}개)`, 'success');
     return { zipName, count: files.length };
   } catch (e) {
-    console.error('전체 다운로드 오류:', e);
-    showStatus('전체 다운로드 중 오류가 발생했습니다.', 'error');
+    console.error('보고자료 ZIP 오류:', e);
+    showStatus('보고자료 ZIP 생성 중 오류가 발생했습니다.', 'error');
     return null;
-  } finally {
-    if (btn && !external) { btn.disabled = false; btn.innerHTML = origDlHTML; }
   }
 }
 
@@ -5543,31 +5346,6 @@ function buildAccSheet(groupedData, dateLabel, tab) {
   return ws;
 }
 
-// 통합 누적저장: 뇌새김 + 톡이즈 동시 저장 후 GitHub 동기화
-// ── 마감 자동 동기화 ──
-// RAW 폴더에 파일이 반영된 뒤 일정 시간 추가 변경이 없으면, [동기화]를 누르지 않아도
-// 누적 저장 + GitHub 동기화를 한 번 수행한다. 토큰이 없으면 모달을 띄우지 않고 조용히 넘어간다.
-const IDLE_SYNC_DELAY = 10 * 60 * 1000;   // 10분
-let idleSyncTimer = null;
-
-function scheduleIdleAutoSync() {
-  if (!authPassed) return;
-  if (idleSyncTimer) clearTimeout(idleSyncTimer);
-  idleSyncTimer = setTimeout(async () => {
-    idleSyncTimer = null;
-    if (!getGhToken()) return;
-    try {
-      console.log('[idle-sync] 파일 반영 후 유휴 — 누적 저장 + 동기화', new Date().toLocaleString('ko-KR'));
-      await ensureAccBuilt();
-      refreshAccDisplay();
-      await syncToGitHub(true, { auto: true });
-      showStatus('마감 자동 동기화 완료', 'success');
-    } catch (e) {
-      if (!e || e.code !== 'NON_PROD_SKIPPED') console.warn('[idle-sync] 실패:', e);
-    }
-  }, IDLE_SYNC_DELAY);
-}
-
 // ── 오늘 마감 (검증 → 누적 저장 → 보고자료 ZIP ∥ 동기화) ──
 // 각 단계는 기존 버튼들이 하던 일과 동일하다. 순서를 기억하지 않아도 되게 묶었을 뿐이다.
 // ZIP과 동기화는 동시에 돈다. 동기화는 네트워크라 느린데 사람이 원하는 산출물은 ZIP이다.
@@ -5575,8 +5353,6 @@ function scheduleIdleAutoSync() {
 async function closeDay() {
   if (!lastGroupedMain && !lastGroupedTalkis) { alert('먼저 데이터를 업로드해주세요.'); return; }
   if (blockedByContractLoad('오늘 마감')) return;
-  // 손으로 마감했으니 예약돼 있던 자동 동기화는 취소
-  if (idleSyncTimer) { clearTimeout(idleSyncTimer); idleSyncTimer = null; }
 
   const btn = document.getElementById('btnCloseDay');
   const icon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>';
@@ -5628,7 +5404,7 @@ async function closeDay() {
     const zipJob = (async () => {
       console.time('[closeDay] ZIP');
       try {
-        const res = await downloadAll({ onStep: (msg) => { if (!zipDone) step(msg); }, skipAcc: true });
+        const res = await downloadAll((msg) => { if (!zipDone) step(msg); });
         if (res) showStatus('보고자료는 저장됐습니다 — 남은 동기화는 기다리지 않으셔도 됩니다.', 'success');
         return res ? `ZIP ${res.count}개 파일` : 'ZIP 실패';
       } catch (e) {
@@ -5666,63 +5442,6 @@ async function closeDay() {
   } finally {
     if (btn) { btn.disabled = false; btn.style.opacity = ''; }
   }
-}
-
-async function saveAccAll() {
-  if (!lastGroupedMain && !lastGroupedTalkis) { alert('먼저 데이터를 업로드해주세요.'); return; }
-  if (idleSyncTimer) { clearTimeout(idleSyncTimer); idleSyncTimer = null; }
-
-  const btn = document.getElementById('btnAccSave');
-  const syncIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
-  const origHTML = btn.innerHTML;
-  btn.innerHTML = syncIcon + ' <span class="btn-label-text">동기화 중...</span>';
-  btn.style.opacity = '0.6';
-  btn.style.pointerEvents = 'none';
-
-  // 오늘 날짜로 폴백하지 않는다 — 대시보드가 안 잡힌 상태에서 빈 스냅샷을 만들던 원인이었다.
-  const dateKey = lastLatestDate;
-  const saved = [];
-  if (dateKey) {
-    // 0짜리 스냅샷 방지 가드를 함께 타도록 autoSaveAccForDate를 재사용한다
-    autoSaveAccForDate(dateKey, lastGroupedMain, lastGroupedTalkis);
-    if (lastGroupedMain) saved.push('뇌새김');
-    if (lastGroupedTalkis) saved.push('톡이즈');
-  }
-
-  // 방법1: 빠진 날짜 자동 보충
-  btn.innerHTML = syncIcon + ' <span class="btn-label-text">누적 데이터 생성 중...</span>';
-  const newCount = await buildAllDateAccumulated(false);
-
-  refreshAccDisplay();
-
-  // GitHub 동기화 (누적 데이터 포함)
-  try {
-    await syncToGitHub(true);
-    btn.innerHTML = syncIcon + ' <span class="btn-label-text">완료!</span>';
-    const extra = newCount > 0 ? ` (${newCount}일치 보충)` : '';
-    showStatus(`${saved.join(', ')} ${dateKey} 동기화 완료!${extra}`, 'success');
-    setTimeout(() => { btn.innerHTML = origHTML; }, 3000);
-  } catch (err) {
-    btn.innerHTML = origHTML;
-    if (err && err.code === 'TOKEN_CANCELED') {
-      showStatus('동기화가 취소되었습니다. 토큰 입력 후 [🔄 동기화]를 다시 눌러주세요.', 'warn');
-    } else {
-      showStatus('로컬 저장은 완료되었으나 동기화에 실패했습니다. [🔄 동기화] 버튼을 다시 눌러주세요.', 'warn');
-    }
-  } finally {
-    btn.style.opacity = '';
-    btn.style.pointerEvents = '';
-  }
-}
-
-// 개별 탭 누적저장 (내부용)
-function saveAccExcelLocal(tab) {
-  const grouped = tab === 'main' ? lastGroupedMain : lastGroupedTalkis;
-  if (!grouped || lastBuildFromSnapshot) return;
-  const dateKey = lastLatestDate || new Date().toISOString().slice(0, 10);
-  const data = serializeGrouped(grouped);
-  data._dateLabel = dateKey;
-  localStorage.setItem(getAccStorageKey(tab, dateKey), JSON.stringify(data));
 }
 
 function datesToRanges(dates) {
@@ -5850,7 +5569,7 @@ function _applyContractLock() {
     vBtn.disabled = locked || !pendingVerify;
     vBtn.title = locked ? lockTitle : '';
   }
-  for (const id of ['btnCloseDay', 'btnDownloadAll']) {
+  for (const id of ['btnCloseDay']) {
     const b = document.getElementById(id);
     if (!b) continue;
     if (b.dataset.origTitle === undefined) b.dataset.origTitle = b.title || '';
@@ -6148,7 +5867,7 @@ function saveTokenAndSync() {
   });
 }
 
-// includeAccumulated: true면 누적 데이터도 포함 (saveAccAll에서 호출 시)
+// includeAccumulated: true면 누적 데이터도 포함
 // ── 원격 data.json 다운로드 + 압축 자동 감지 ──
 async function fetchRemoteData() {
   try {
@@ -6216,7 +5935,7 @@ function mergeSharedData(remote, local) {
 const PROD_HOSTS = new Set(['wminfobin-byte.github.io']);
 function isProdOrigin() { return PROD_HOSTS.has(location.hostname); }
 
-// opts.auto — 사람이 누르지 않은 자동 동기화(폴링·유휴·시간대). 실서버가 아니면 조용히 건너뛴다.
+// opts.auto — 사람이 누르지 않은 자동 동기화. 실서버가 아니면 조용히 건너뛴다.
 async function syncToGitHub(includeAccumulated, opts) {
   opts = opts || {};
   if (!isProdOrigin()) {
@@ -6993,7 +6712,7 @@ async function forceRebuildAllSnapshots() {
       status.textContent = `재빌드 + 동기화 완료 (${newCount}일치)`;
       status.style.color = '#2e7d32';
     } catch (e) {
-      status.textContent = `재빌드는 완료했으나 동기화 실패: ${e.message || e}. [동기화] 버튼을 눌러주세요.`;
+      status.textContent = `재빌드는 완료했으나 동기화 실패: ${e.message || e}. [오늘 마감]을 다시 눌러주세요.`;
       status.style.color = '#c62828';
     }
   } catch (e) {
@@ -7005,33 +6724,9 @@ async function forceRebuildAllSnapshots() {
   }
 }
 
-// ── 자동 동기화: 22:00, 23:00, 00:00 정각 (탭 열려있어야 동작) ──
-function setupAutoSync() {
-  const TARGET_HOURS = new Set([22, 23, 0]);
-  function scheduleNext() {
-    const now = new Date();
-    const next = new Date(now);
-    next.setMinutes(0, 0, 0);
-    do { next.setHours(next.getHours() + 1); } while (!TARGET_HOURS.has(next.getHours()));
-    const delay = next.getTime() - now.getTime();
-    setTimeout(async () => {
-      if (getGhToken()) {
-        try {
-          console.log('[auto-sync]', new Date().toLocaleString('ko-KR'));
-          await syncToGitHub(true, { auto: true });
-        } catch (e) {
-          if (!e || e.code !== 'NON_PROD_SKIPPED') console.warn('[auto-sync] 실패:', e);
-        }
-      }
-      scheduleNext();
-    }, delay);
-  }
-  scheduleNext();
-}
-
 // ── Init ──
 (async function init() {
-  if (authPassed) { applyAuthUI(); setupAutoSync(); }
+  if (authPassed) { applyAuthUI(); }
   else { startViewerAutoFetch(); }
 
   // 로딩 UI 시작
