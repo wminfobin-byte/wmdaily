@@ -1890,13 +1890,18 @@ async function requestCmsFetch() {
       return;
     }
     if (s.state === 'running') { setLabel(`받는 중... ${Math.round((Date.now() - (s.startedAt || t0)) / 60000)}분`); return; }
+    if (s.state === 'closing') { setLabel(`검증·마감 중... ${Math.round((Date.now() - (s.startedAt || t0)) / 60000)}분`); return; }
     clearInterval(cmsFetchWatch); cmsFetchWatch = null;
     setLabel('마감 데이터 받기');
     const res = s.results || {};
     const bad = Object.entries(res).filter(([, v]) => v !== 'ok');
     if (s.state === 'done') showStatus(`CMS 마감 데이터 받기 완료 (${s.date}) — RAW 폴더에서 곧 자동 반영됩니다.`, 'success');
-    else if (s.state === 'closed') showStatus(`CMS 받기 → 검증 일치 → 오늘 마감·동기화까지 자동 완료 (${s.date})`, 'success');
-    else if (s.state === 'verify-mismatch') showStatus(`CMS 파일은 받았지만 검증 불일치 ${s.dashboard?.verify?.total ?? ''}건 — 자동 마감하지 않았습니다. 확인 후 직접 마감해주세요.`, 'error');
+    else if (s.state === 'closed') {
+      const synced = s.dashboard?.synced;
+      showStatus(`CMS 받기 → 검증 → 오늘 마감 자동 완료 (${s.date})` + (synced ? ' — 동기화까지 끝났습니다. 새로고침하면 반영됩니다.' : ' — 단, 동기화는 실패했습니다. [오늘 마감]을 직접 한 번 눌러주세요.'), synced ? 'success' : 'error');
+    }
+    else if (s.state === 'verify-mismatch') showStatus(`CMS 파일은 받았지만 검증에서 멈췄습니다 (${s.dashboard?.verify?.judge?.reason || '불일치'}). 자동 마감하지 않았습니다. 확인 후 직접 마감해주세요.`, 'error');
+    else if (s.state === 'close-failed') showStatus(`CMS 파일은 받았지만 자동 마감 단계가 실패했습니다${s.error ? ' (' + s.error + ')' : ''}. 업로드 후 [오늘 마감]을 직접 눌러주세요.`, 'error');
     else showStatus(`CMS 마감 데이터 받기 ${s.state === 'error' ? '실패' : '일부 실패'}: ` +
       (s.error || bad.map(([k, v]) => `${NAMES[k] || k} — ${v}`).join(' / ')), 'error');
   }, 10000);
