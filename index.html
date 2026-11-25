@@ -1389,6 +1389,34 @@ function openDB() {
 // 메모리 캐시: 공유 데이터 로드 시 IDB 저장 전에 대시보드를 바로 빌드하기 위함
 let _accCache = null;
 
+// dates/keyMeta 전체 재저장. keyMeta가 150만 건이라 한 트랜잭션에 넣으면 메모리가 부족한 PC에서
+// 끝나지 않는다. 2만 건씩 나눠 커밋한다. 중간에 끊겨도 gh_data_exportedAt이 갱신되지 않으므로
+// 다음 로드 때 원격 데이터로 다시 채운다.
+async function saveAccToIDBChunked(dates, keyMeta, onProgress) {
+  const db = await openDB();
+  const done = tx => new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error('IDB abort')); });
+  try {
+    const tx0 = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
+    tx0.objectStore(STORE_DATES).clear();
+    tx0.objectStore(STORE_KEYS).clear();
+    const ds = tx0.objectStore(STORE_DATES);
+    for (const [k, v] of Object.entries(dates || {})) ds.put(v, k);
+    await done(tx0);
+    const entries = Object.entries(keyMeta || {});
+    const CHUNK = 20000;
+    for (let i = 0; i < entries.length; i += CHUNK) {
+      const tx = db.transaction(STORE_KEYS, 'readwrite');
+      const ks = tx.objectStore(STORE_KEYS);
+      const end = Math.min(i + CHUNK, entries.length);
+      for (let j = i; j < end; j++) ks.put(entries[j][1], entries[j][0]);
+      await done(tx);
+      if (onProgress) onProgress(end, entries.length);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 async function loadAccumulated() {
   // 메모리 캐시가 있으면 IDB 읽기 스킵
   if (_accCache) return _accCache;
@@ -6422,16 +6450,13 @@ async function loadSharedData() {
         rosterStore.clear();
         for (const [mk, rows] of Object.entries(shared.roster || {})) rosterStore.put(rows, mk);
         await new Promise((resolve, reject) => { txR.oncomplete = resolve; txR.onerror = () => reject(txR.error); });
-        // dates/keyMeta 저장 (clear 후 재저장 — 오래된 키 잔존 방지)
-        const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
-        tx.objectStore(STORE_DATES).clear();
-        tx.objectStore(STORE_KEYS).clear();
-        const dateStore = tx.objectStore(STORE_DATES);
-        const keyStore = tx.objectStore(STORE_KEYS);
-        for (const [k, v] of Object.entries(shared.dates)) dateStore.put(v, k);
-        for (const [k, v] of Object.entries(shared.keyMeta)) keyStore.put(v, k);
-        await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
         db.close();
+        // dates/keyMeta 저장 (clear 후 재저장 — 오래된 키 잔존 방지, 2만 건씩 분할 커밋)
+        await saveAccToIDBChunked(shared.dates, shared.keyMeta, (n, total) => {
+          const pct = Math.round(n / total * 100);
+          if (authPassed) setProgress(96, `데이터 저장 중... ${pct}%`);
+          setIdbStatus(true, `데이터 동기화 중... ${pct}%`);
+        });
         _accCache = null;
         setIdbStatus(false);
       } catch(e) {
@@ -6654,13 +6679,14 @@ async function refreshFromRemoteIfNeeded() {
       for (const [mk, rows] of Object.entries(remote.roster || {})) rs.put(rows, mk);
       await new Promise((resolve, reject) => { txR.oncomplete = resolve; txR.onerror = () => reject(txR.error); });
 
-      const tx = db.transaction([STORE_DATES, STORE_KEYS], 'readwrite');
-      tx.objectStore(STORE_DATES).clear();
-      tx.objectStore(STORE_KEYS).clear();
-      for (const [k, v] of Object.entries(remote.dates)) tx.objectStore(STORE_DATES).put(v, k);
-      for (const [k, v] of Object.entries(remote.keyMeta)) tx.objectStore(STORE_KEYS).put(v, k);
-      await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
       db.close();
+      await saveAccToIDBChunked(remote.dates, remote.keyMeta, (n, total) => {
+        const el = document.getElementById('idbSyncStatus');
+        const txt = document.getElementById('idbSyncText');
+        if (el && txt) { el.style.display = 'inline-flex'; txt.textContent = `데이터 동기화 중... ${Math.round(n / total * 100)}%`; }
+      });
+      const el = document.getElementById('idbSyncStatus');
+      if (el) el.style.display = 'none';
       _accCache = null;
     } catch(e) {
       console.warn('[remoteRefresh] IDB 저장 오류:', e);
