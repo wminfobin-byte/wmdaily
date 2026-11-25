@@ -299,6 +299,8 @@
   /* 오늘 마감 버튼 (헤더 주 액션) */
   .btn-close-day { border-color: rgba(234,88,12,0.45); background: rgba(234,88,12,0.16); }
   .btn-close-day:hover { background: rgba(234,88,12,0.3); border-color: rgba(234,88,12,0.7); }
+  .btn-cms-fetch { border-color: rgba(56,189,248,0.45); background: rgba(56,189,248,0.14); }
+  .btn-cms-fetch:hover { background: rgba(56,189,248,0.28); border-color: rgba(56,189,248,0.7); }
 
   /* 오늘 재료 도착 현황 바 */
   #todayReadyBar { display: none; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;
@@ -457,6 +459,10 @@
   </div>
   <div class="header-right">
     <span id="syncTime" style="font-size:11px;opacity:0.5;display:none;letter-spacing:0.2px;"></span>
+    <button class="btn-upload-open btn-cms-fetch" id="btnCmsFetch" style="display:none;" onclick="requestCmsFetch()" title="CMS에서 오늘 마감 RAW(고객관리·신청자관리·일일성과·그룹표기)를 받아 공용 RAW 폴더에 넣으라고 자동다운로드 프로그램에 요청합니다. 받은 파일은 RAW 폴링으로 자동 반영됩니다.">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="btn-label-text">마감 데이터 받기</span>
+    </button>
     <button class="btn-upload-open btn-close-day" id="btnCloseDay" style="display:none;" onclick="closeDay()" title="검증 → 누적 저장 → 보고자료 ZIP 다운로드 → 공유 데이터 동기화까지 한 번에 실행합니다. 공유 데이터는 이 버튼으로만 갱신됩니다.">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
       <span class="btn-label-text">오늘 마감</span>
@@ -1009,6 +1015,7 @@ function applyAuthUI() {
   adminBtn.classList.remove('btn-admin');
   adminBtn.classList.add('btn-upload');
   document.getElementById('btnCloseDay').style.display = '';
+  document.getElementById('btnCmsFetch').style.display = '';
   document.getElementById('btnLogout').style.display = '';
   restoreSyncTime();
   // RAW 폴더 연결 UI는 로그인 이후 + 핸들 복원 후 표시
@@ -1031,6 +1038,7 @@ function authLogout() {
   adminBtn.classList.remove('btn-upload');
   adminBtn.classList.add('btn-admin');
   document.getElementById('btnCloseDay').style.display = 'none';
+  document.getElementById('btnCmsFetch').style.display = 'none';
   document.getElementById('btnLogout').style.display = 'none';
   document.getElementById('syncTime').style.display = 'none';
   // 열람자 모드로 돌아가면 RAW 폴더 UI 즉시 숨김 + RAW 폴링 정지 + 열람자 fetch 재개
@@ -1805,6 +1813,65 @@ async function _clearRawDirHandle() {
 async function queryRawPermission(handle, mode = 'readwrite') {
   if (!handle || !handle.queryPermission) return 'denied';
   try { return await handle.queryPermission({ mode }); } catch { return 'denied'; }
+}
+
+// ── [마감 데이터 받기] → CMS 자동다운로드 프로그램(cms_auto/watch.mjs)에 요청 ──
+// 브라우저는 CMS에 직접 접속하지 않는다. 공용 RAW 폴더의 _자동다운로드\request.json 을 쓰면
+// 관리자 PC에서 돌고 있는 프로그램이 10초 안에 집어 가서 다운로드하고, status.json 에 진행 상황을 적는다.
+// 받은 파일은 기존 RAW 폴링(30초)이 그대로 반영한다.
+let cmsFetchWatch = null;
+async function requestCmsFetch() {
+  const btn = document.getElementById('btnCmsFetch');
+  const label = btn && btn.querySelector('.btn-label-text');
+  const setLabel = t => { if (label) label.textContent = t; };
+  if (!rawState.rootHandle) { showStatus('먼저 RAW 폴더를 연결해주세요.', 'error'); return; }
+  if (await ensureRawPermission(rawState.rootHandle, 'readwrite') !== 'granted') {
+    showStatus('RAW 폴더 쓰기 권한이 없어 요청할 수 없습니다.', 'error'); return;
+  }
+  const kstToday = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+  if (!confirm(`${kstToday} 마감 데이터를 CMS에서 받아 RAW 폴더에 넣을까요?\n\n같은 날짜 파일이 있으면 새로 받은 파일로 바뀝니다.\n신청자관리 생성 대기 때문에 10분 안팎 걸립니다.`)) return;
+
+  let dir;
+  try { dir = await rawState.rootHandle.getDirectoryHandle('_자동다운로드', { create: true }); }
+  catch (e) { showStatus('요청 폴더를 만들 수 없습니다: ' + e.message, 'error'); return; }
+  const readJson = async name => {
+    try { return JSON.parse(await (await (await dir.getFileHandle(name)).getFile()).text()); } catch { return null; }
+  };
+  const before = await readJson('status.json');
+  try {
+    const fh = await dir.getFileHandle('request.json', { create: true });
+    const w = await fh.createWritable();
+    await w.write(JSON.stringify({ date: kstToday, at: Date.now(), by: 'wmdaily' }));
+    await w.close();
+  } catch (e) { showStatus('요청 파일을 쓰지 못했습니다: ' + e.message, 'error'); return; }
+
+  showStatus('CMS 다운로드를 요청했습니다. 진행 상황은 버튼에 표시됩니다.', 'success');
+  setLabel('요청됨...');
+  if (cmsFetchWatch) clearInterval(cmsFetchWatch);
+  const t0 = Date.now();
+  const NAMES = { roster: '그룹표기', daily: '일일성과', db: '고객관리', contract: '신청자(월간)', contractDay: '신청자(일마감)' };
+  cmsFetchWatch = setInterval(async () => {
+    const s = await readJson('status.json');
+    const fresh = s && s.updatedAt > t0 && (!before || s.updatedAt !== before.updatedAt);
+    const pending = await dir.getFileHandle('request.json').then(() => true, () => false);
+    if (!fresh) {
+      if (pending && Date.now() - t0 > 60000) {
+        clearInterval(cmsFetchWatch); cmsFetchWatch = null; setLabel('마감 데이터 받기');
+        showStatus('자동다운로드 프로그램이 요청을 가져가지 않습니다. 관리자 PC에서 프로그램이 켜져 있는지 확인해주세요.', 'error');
+      }
+      return;
+    }
+    if (s.state === 'running') { setLabel(`받는 중... ${Math.round((Date.now() - (s.startedAt || t0)) / 60000)}분`); return; }
+    clearInterval(cmsFetchWatch); cmsFetchWatch = null;
+    setLabel('마감 데이터 받기');
+    const res = s.results || {};
+    const bad = Object.entries(res).filter(([, v]) => v !== 'ok');
+    if (s.state === 'done') showStatus(`CMS 마감 데이터 받기 완료 (${s.date}) — RAW 폴더에서 곧 자동 반영됩니다.`, 'success');
+    else if (s.state === 'closed') showStatus(`CMS 받기 → 검증 일치 → 오늘 마감·동기화까지 자동 완료 (${s.date})`, 'success');
+    else if (s.state === 'verify-mismatch') showStatus(`CMS 파일은 받았지만 검증 불일치 ${s.dashboard?.verify?.total ?? ''}건 — 자동 마감하지 않았습니다. 확인 후 직접 마감해주세요.`, 'error');
+    else showStatus(`CMS 마감 데이터 받기 ${s.state === 'error' ? '실패' : '일부 실패'}: ` +
+      (s.error || bad.map(([k, v]) => `${NAMES[k] || k} — ${v}`).join(' / ')), 'error');
+  }, 10000);
 }
 
 // 사용자 제스처 안에서만 호출. 'prompt' 상태면 권한 모달 띄움.
@@ -4815,7 +4882,7 @@ function autoSaveAccForDate(dateKey, groupedMain, groupedTalkis) {
       return;
     }
     data._dateLabel = dateKey;
-    localStorage.setItem(getAccStorageKey(tab, dateKey), JSON.stringify(data));
+    setAccItem(getAccStorageKey(tab, dateKey), JSON.stringify(data));
   };
   save('main', groupedMain);
   save('talkis', groupedTalkis);
@@ -4996,11 +5063,11 @@ function buildSingleDateAcc(targetDate, acc, allDates) {
   // 저장
   const mainData = serializeGrouped(groupedMain);
   mainData._dateLabel = targetDate;
-  localStorage.setItem(getAccStorageKey('main', targetDate), JSON.stringify(mainData));
+  setAccItem(getAccStorageKey('main', targetDate), JSON.stringify(mainData));
 
   const talkisData = serializeGrouped(groupedTalkis);
   talkisData._dateLabel = targetDate;
-  localStorage.setItem(getAccStorageKey('talkis', targetDate), JSON.stringify(talkisData));
+  setAccItem(getAccStorageKey('talkis', targetDate), JSON.stringify(talkisData));
 }
 
 async function buildAllDateAccumulated(force) {
@@ -5052,6 +5119,51 @@ async function buildAllDateAccumulated(force) {
   return newCount;
 }
 const ACC_STORAGE_PREFIX = 'wmdaily_acc_';
+
+// 보관 정책(당월은 전부, 이전달은 탭별 마지막 날짜만)에 맞는 누적 키만 골라낸다.
+// 공유 data.json 병합이 합집합이라 로컬에서 지운 이전달 스냅샷이 동기화 때마다 되살아났고,
+// 그렇게 쌓인 390개(약 620만 자)가 localStorage 한도를 넘겨 당일 스냅샷 저장이 조용히 실패했다.
+// 그 결과 [오늘 마감] 엑셀에 당일 시트가 빠졌다. (2026-11-25)
+function pruneAccObject(obj) {
+  if (!obj) return obj;
+  const today = new Date();
+  const curMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const lastByTabMonth = {};
+  for (const key of Object.keys(obj)) {
+    const m = key.match(/^wmdaily_acc_(main|talkis)_(\d{4}-\d{2})-\d{2}$/);
+    if (!m) continue;
+    const tm = m[1] + '_' + m[2];
+    const dt = key.slice(-10);
+    if (!lastByTabMonth[tm] || dt > lastByTabMonth[tm]) lastByTabMonth[tm] = dt;
+  }
+  const out = {};
+  for (const [key, val] of Object.entries(obj)) {
+    const m = key.match(/^wmdaily_acc_(main|talkis)_(\d{4}-\d{2})-\d{2}$/);
+    if (!m) { out[key] = val; continue; }
+    if (m[2] >= curMonth || lastByTabMonth[m[1] + '_' + m[2]] === key.slice(-10)) out[key] = val;
+  }
+  return out;
+}
+
+// 누적 스냅샷 저장. 용량 초과면 정리 후 한 번 더 시도하고, 그래도 안 되면 예외를 던진다.
+function setAccItem(key, val) {
+  try { localStorage.setItem(key, val); return; }
+  catch (e) {
+    console.warn('[acc] 저장 실패, 이전달 정리 후 재시도:', key, e && e.name);
+    cleanupAccumulatedByMonth();
+  }
+  localStorage.setItem(key, val);
+}
+
+// 공유 데이터의 누적 스냅샷을 localStorage에 복원한다. 정책 밖 키는 넣지 않고, 한 건 실패로 전체가 멈추지 않게 한다.
+function restoreAccumulated(accObj) {
+  const kept = pruneAccObject(accObj) || {};
+  let fail = 0;
+  for (const [key, val] of Object.entries(kept)) {
+    try { setAccItem(key, val); } catch { fail++; }
+  }
+  if (fail) console.warn(`[acc] 누적 스냅샷 복원 실패 ${fail}건 (저장 공간 부족)`);
+}
 
 // 월초 자동 정리: 이전달은 마지막 영업일 데이터만 남기고 삭제
 function cleanupAccumulatedByMonth() {
@@ -5396,6 +5508,19 @@ async function closeDay() {
     refreshAccDisplay();
     console.timeEnd('[closeDay] 누적 저장');
 
+    // 당일 스냅샷이 실제로 저장됐는지 확인한다. 저장이 실패하면 PNG는 당일인데 엑셀은 전일까지만
+    // 들어간 ZIP이 나가고, 동기화로 공유 데이터에도 당일이 빠진다. 그러느니 여기서 멈춘다.
+    if (lastLatestDate && !lastBuildFromSnapshot) {
+      const missing = ['main', 'talkis'].filter(t => !localStorage.getItem(getAccStorageKey(t, lastLatestDate)));
+      if (missing.length) {
+        const label = missing.map(t => t === 'main' ? '뇌새김' : '톡이즈').join('·');
+        alert(`${lastLatestDate} ${label} 누적 저장에 실패했습니다.\n이대로면 엑셀에 당일 시트가 빠집니다.\n\n새로고침 후 다시 [오늘 마감]을 눌러주세요. 반복되면 콘솔 내용을 알려주세요.`);
+        showStatus(`오늘 마감 중단 — ${lastLatestDate} 누적 저장 실패 (${label})`, 'error');
+        if (btn) btn.innerHTML = orig;
+        return;
+      }
+    }
+
     // 3) 보고자료 ZIP + 4) GitHub 동기화 — 동시에 시작한다.
     //    예전에 '전체 다운로드' 누르고 바로 '동기화' 누르던 것과 같다. 동기화는 네트워크 대기가
     //    대부분이라 ZIP 생성과 겹쳐도 되고, 누적 저장은 위에서 끝났으니 둘 다 같은 데이터를 쓴다.
@@ -5721,13 +5846,14 @@ function runVerify(opts) {
   if (total === 0 && dateMatch) {
     _setVerifyStatus(`일치 ✓ (${comparedCount}명)`, '#2e7d32');
     showStatus(`CMS 검증 일치 ✓ — 비교 ${comparedCount}명 모두 일치`, 'success');
-    return { ok: true, total: 0, comparedCount };
+    return { ok: true, total: 0, comparedCount, mismatches, cmsOnly, dashOnly, dateMatch };
   }
 
   _setVerifyStatus(`불일치 ${total}건 — 모달 확인`, '#c62828');
   // 자동 실행이든 수동이든, 불일치일 때는 반드시 모달로 알린다.
   _showVerifyResult({ mismatches, cmsOnly, dashOnly, firstDate, dateMatch, comparedCount });
-  return { ok: false, total, comparedCount };
+  // 상세 내역도 돌려준다 — 자동 마감(cms_auto/dashboard.mjs)이 허용 규칙을 판단할 때 쓴다
+  return { ok: false, total, comparedCount, mismatches, cmsOnly, dashOnly, dateMatch };
 }
 
 // ── 검증 자동 실행 ──
@@ -5923,7 +6049,7 @@ function mergeSharedData(remote, local) {
 
   // accumulated: 합집합, 같은 키는 로컬 우선
   if (remote.accumulated || local.accumulated) {
-    merged.accumulated = Object.assign({}, remote.accumulated || {}, local.accumulated || {});
+    merged.accumulated = pruneAccObject(Object.assign({}, remote.accumulated || {}, local.accumulated || {}));
   }
 
   return merged;
@@ -6246,9 +6372,7 @@ async function loadSharedData() {
 
     // 누적 저장 데이터 복원
     if (shared.accumulated) {
-      for (const [key, val] of Object.entries(shared.accumulated)) {
-        localStorage.setItem(key, val);
-      }
+      restoreAccumulated(shared.accumulated);
       refreshAccDisplay();
     }
 
@@ -6509,9 +6633,7 @@ async function refreshFromRemoteIfNeeded() {
 
     // 누적 저장 데이터 복원
     if (remote.accumulated) {
-      for (const [key, val] of Object.entries(remote.accumulated)) {
-        localStorage.setItem(key, val);
-      }
+      restoreAccumulated(remote.accumulated);
     }
 
     // 메모리 캐시 + 대시보드 재빌드
