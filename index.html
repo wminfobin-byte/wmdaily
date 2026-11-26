@@ -1844,7 +1844,7 @@ async function queryRawPermission(handle, mode = 'readwrite') {
 }
 
 // ── [마감 데이터 받기] → CMS 자동다운로드 프로그램(cms_auto/watch.mjs)에 요청 ──
-// 브라우저는 CMS에 직접 접속하지 않는다. 공용 RAW 폴더의 _자동다운로드\request.json 을 쓰면
+// 브라우저는 CMS에 직접 접속하지 않는다. 공용 RAW 폴더의 '데일리 성과 메일 발송 자료'\request.json 을 쓰면
 // 관리자 PC에서 돌고 있는 프로그램이 10초 안에 집어 가서 다운로드하고, status.json 에 진행 상황을 적는다.
 // 받은 파일은 기존 RAW 폴링(30초)이 그대로 반영한다.
 let cmsFetchWatch = null;
@@ -1860,7 +1860,7 @@ async function requestCmsFetch() {
   if (!confirm(`${kstToday} 마감 데이터를 CMS에서 받아 RAW 폴더에 넣을까요?\n\n같은 날짜 파일이 있으면 새로 받은 파일로 바뀝니다.\n신청자관리 생성 대기 때문에 10분 안팎 걸립니다.`)) return;
 
   let dir;
-  try { dir = await rawState.rootHandle.getDirectoryHandle('_자동다운로드', { create: true }); }
+  try { dir = await rawState.rootHandle.getDirectoryHandle('데일리 성과 메일 발송 자료', { create: true }); }
   catch (e) { showStatus('요청 폴더를 만들 수 없습니다: ' + e.message, 'error'); return; }
   const readJson = async name => {
     try { return JSON.parse(await (await (await dir.getFileHandle(name)).getFile()).text()); } catch { return null; }
